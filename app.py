@@ -2,10 +2,10 @@ import streamlit as st
 import psycopg2 
 import pandas as pd
 from psycopg2.extras import RealDictCursor 
+import io
+import xlsxwriter # Importamos para asegurar que pandas lo reconozca para Excel
 
-# --- Función para obtener la conexión a la base de datos (CORREGIDA) ---
-# Se elimina @st.cache_resource para asegurar que cada función obtenga una conexión
-# nueva y no interfiera con otras cerrando la conexión antes de tiempo.
+# --- Función para obtener la conexión a la base de datos ---
 def get_db_connection():
     """
     Establece y devuelve una conexión NUEVA a la base de datos PostgreSQL.
@@ -49,7 +49,7 @@ def insertar_medio_cultivo(nombre, ingrediente, concentracion, unidad):
         cur.execute(sql, (nombre, ingrediente, float(concentracion), unidad))
         
         conn.commit()
-        st.success(f"¡Ingrediente '{ingrediente}' guardado para el medio '{nombre}'!")
+        st.success(f"¡Ingrediente '{ingrediente}' guardado para el medio de cultivo '{nombre}'!")
         return True
         
     except psycopg2.Error as e:
@@ -89,8 +89,9 @@ def obtener_medios_cultivo():
         if conn:
             conn.close()
 
-# --- Función para obtener todos los nombres de fórmulas únicos ---
-def obtener_nombres_formulas():
+# --- CAMBIO APLICADO AQUÍ ---
+# Función para obtener todos los nombres de medios de cultivo únicos
+def obtener_nombres_medios_cultivo():
     conn = None
     cur = None
     try:
@@ -102,7 +103,7 @@ def obtener_nombres_formulas():
         return [row[0] for row in cur.fetchall()]
     except psycopg2.Error as e:
         # En el despliegue no queremos mostrar errores internos al usuario final
-        print(f"Error al obtener nombres de fórmulas: {e}")
+        print(f"Error al obtener nombres de medios de cultivo: {e}")
         return []
     finally:
         if cur:
@@ -143,21 +144,19 @@ def convertir_a_csv(df):
 
 def convertir_a_excel(df):
     # Requiere el paquete openpyxl para funcionar en Streamlit Cloud
-    import io
     output = io.BytesIO()
     # Escribe el DataFrame en el buffer de BytesIO
+    # CAMBIO DE NOMBRE DE LA HOJA INTERNA DEL ARCHIVO EXCEL
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Fórmulas')
+        df.to_excel(writer, index=False, sheet_name='Medios_de_Cultivo')
     # Devuelve el contenido del buffer
     return output.getvalue()
 
-# --- Aquí están get_db_connection, insertar_medio_cultivo, obtener_medios_cultivo...
-
-# --- Función para actualizar un registro por ID (Debe empezar en la línea 121) ---
+# --- Función para actualizar un registro por ID ---
 def actualizar_medio_cultivo(registro_id, nombre, ingrediente, concentracion, unidad):
     conn = None
     cur = None
-    try: # <--- ESTA LÍNEA DEBE TENER INDENTACIÓN
+    try:
         conn = get_db_connection()
         cur = conn.cursor()
         
@@ -183,15 +182,9 @@ def actualizar_medio_cultivo(registro_id, nombre, ingrediente, concentracion, un
             cur.close()
         if conn:
             conn.close()
-# La siguiente línea (st.title) debe ir SIN indentación.
 
 # --- AQUÍ COMIENZA LA INTERFAZ DE USUARIO ---
-st.title("🌱 GestCultivos...")
-# ...
-
-# --- Interfaz de Usuario de Streamlit ---
-
-st.title("🌱 Gestión de Medios")
+st.title("🌱 Gestión de Medios de Cultivo")
 
 # Lógica de verificación de conexión (solo para mostrar el mensaje de éxito)
 try:
@@ -203,35 +196,38 @@ except Exception:
     pass
 
 # --- Obtener opciones para el formulario de registro (tab1) ---
-# Usamos la función ya existente para obtener las fórmulas
-nombres_formulas = obtener_nombres_formulas()
+# CAMBIO APLICADO AQUÍ
+nombres_medios = obtener_nombres_medios_cultivo()
 
 # Creamos la lista de opciones para el selectbox de registro
-opciones_registro = ["-- Seleccionar Fórmula --", "Nueva Fórmula"] + nombres_formulas
+opciones_registro = ["-- Seleccionar Medio de Cultivo --", "Nuevo Medio de Cultivo"] + nombres_medios
 
 # Usamos set() para eliminar duplicados y luego volvemos a listar, por si acaso
 opciones_registro = list(set(opciones_registro))
 opciones_registro.sort() # Opcional, para ordenar alfabéticamente
 
 # TABS
-tab1, tab2, tab3 = st.tabs(["➕ Registrar Ingrediente", "📋 Catálogo / Edición", "🧪 Fórmulas Completas"])
+# CAMBIO APLICADO AQUÍ
+tab1, tab2, tab3 = st.tabs(["➕ Registrar Ingrediente", "📋 Catálogo / Edición", "🧪 Medios de Cultivo Completos"])
 
 with tab1:
-    st.subheader("➕ Registrar Nuevo Ingrediente de Fórmula")
+    st.subheader("➕ Registrar Nuevo Ingrediente de Medio de Cultivo")
     
     # 1. El formulario completo debe estar dentro de st.form
     with st.form(key="form_registrar_medio"):
         
         # Usamos el selectbox con las opciones que definimos arriba
+        # CAMBIO APLICADO AQUÍ
         nombre_medio = st.selectbox(
-            "Nombre de la Fórmula:", 
+            "Nombre del Medio de Cultivo:", 
             options=opciones_registro,
             key="input_nombre_medio"
         )
         
         # Lógica para permitir escribir una nueva fórmula si se elige "Nueva Fórmula"
-        if nombre_medio == "Nueva Fórmula":
-            nombre_medio = st.text_input("Escribe el nombre de la Nueva Fórmula:", key="nuevo_nombre_medio")
+        # CAMBIO APLICADO AQUÍ
+        if nombre_medio == "Nuevo Medio de Cultivo":
+            nombre_medio = st.text_input("Escribe el nombre del Nuevo Medio de Cultivo:", key="nuevo_nombre_medio")
             # Esto asegura que el campo no esté vacío si se intenta registrar
             if not nombre_medio.strip():
                 nombre_medio = None # Lo establecemos a None para que la validación posterior falle
@@ -266,14 +262,17 @@ with tab2:
         df = pd.DataFrame(datos_medios)
         
         # --- LÓGICA DE FILTRADO ---
-        nombres_formulas = obtener_nombres_formulas()
+        # CAMBIO APLICADO AQUÍ
+        nombres_medios = obtener_nombres_medios_cultivo()
         
         # Insertar la opción "Mostrar todos" al principio
-        opciones_filtro = ["Mostrar todos"] + nombres_formulas
+        # CAMBIO APLICADO AQUÍ
+        opciones_filtro = ["Mostrar todos"] + nombres_medios
 
         # Crea el SelectBox para elegir la fórmula
+        # CAMBIO APLICADO AQUÍ
         filtro_seleccionado = st.selectbox(
-            "Filtrar por nombre de fórmula:",
+            "Filtrar por nombre de Medio de Cultivo:",
             options=opciones_filtro,
             index=0
         )
@@ -281,10 +280,12 @@ with tab2:
         # Aplicar el filtro si no se seleccionó "Mostrar todos"
         if filtro_seleccionado != "Mostrar todos":
             df_filtrado = df[df['nombre_medio'] == filtro_seleccionado]
-            st.info(f"Mostrando solo ingredientes para la fórmula: **{filtro_seleccionado}**")
+            # CAMBIO APLICADO AQUÍ
+            st.info(f"Mostrando solo ingredientes para el medio de cultivo: **{filtro_seleccionado}**")
         else:
             df_filtrado = df # Si es "Mostrar todos", usa el DataFrame completo
             st.info("Mostrando todos los ingredientes en el catálogo.")
+        
         # --- BOTONES DE DESCARGA ---
         if not df_filtrado.empty:
             
@@ -314,7 +315,7 @@ with tab2:
                 )
 
         st.markdown("---") # Separador visual
-        # ... (el resto del código de la pestaña 2 continúa aquí) ...
+        
         # --- LÓGICA DE EDICIÓN ---
         
         # Si hay un ID en el estado de sesión, muestra el formulario de edición
@@ -326,7 +327,8 @@ with tab2:
             
             with st.form(key="form_editar_medio", clear_on_submit=False):
                 # Campos precargados con los valores actuales del registro
-                nombre_medio_edit = st.text_input("Nombre de la Fórmula", value=registro_a_editar['nombre_medio'], key="edit_nombre")
+                # CAMBIO APLICADO AQUÍ
+                nombre_medio_edit = st.text_input("Nombre del Medio de Cultivo", value=registro_a_editar['nombre_medio'], key="edit_nombre")
                 ingrediente_edit = st.text_input("Ingrediente", value=registro_a_editar['ingrediente'], key="edit_ingrediente")
                 concentracion_edit = st.number_input("Concentración", value=float(registro_a_editar['concentracion']), format="%.4f", min_value=0.0, key="edit_concentracion")
                 unidad_edit = st.selectbox("Unidad de Medida", ["mg/L", "g/L", "mM"], index=["mg/L", "g/L", "mM"].index(registro_a_editar['unidad']), key="edit_unidad")
@@ -396,18 +398,23 @@ with tab2:
         st.info("Aún no hay medios de cultivo registrados en la base de datos.")
     
 with tab3:
+    # CAMBIO APLICADO AQUÍ
     st.subheader("🧪 Composición Detallada de Medios de Cultivo")
 
-    nombres_formulas = obtener_nombres_formulas()
+    # CAMBIO APLICADO AQUÍ
+    nombres_medios = obtener_nombres_medios_cultivo()
 
-    if not nombres_formulas:
-        st.info("Aún no hay fórmulas registradas para mostrar.")
+    if not nombres_medios:
+        # CAMBIO APLICADO AQUÍ
+        st.info("Aún no hay medios de cultivo registrados para mostrar.")
     else:
-        st.markdown(f"**Total de Fórmulas Únicas Registradas:** **{len(nombres_formulas)}**")
+        # CAMBIO APLICADO AQUÍ
+        st.markdown(f"**Total de Medios de Cultivo Únicos Registrados:** **{len(nombres_medios)}**")
         st.markdown("---")
         
         # 1. Iterar sobre cada nombre de fórmula único
-        for nombre in nombres_formulas:
+        # CAMBIO APLICADO AQUÍ
+        for nombre in nombres_medios:
             
             # 2. Obtener todos los ingredientes para esta fórmula específica
             conn = None
@@ -424,7 +431,8 @@ with tab3:
                 if ingredientes:
                     
                     # Título de la Fórmula
-                    st.header(f"🧬 {nombre}")
+                    # CAMBIO APLICADO AQUÍ
+                    st.header(f"🧬 Medio de Cultivo: {nombre}")
                     
                     # Convertir a DataFrame y formatear la concentración
                     df_formula = pd.DataFrame(ingredientes, columns=['Ingrediente', 'Concentración', 'Unidad'])
@@ -437,7 +445,8 @@ with tab3:
                     st.markdown("---")
                     
             except psycopg2.Error as e:
-                st.error(f"Error al cargar la fórmula {nombre}: {e}")
+                # CAMBIO APLICADO AQUÍ
+                st.error(f"Error al cargar el medio de cultivo {nombre}: {e}")
                 
             finally:
                 if cur:
