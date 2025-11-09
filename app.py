@@ -3,7 +3,14 @@ import psycopg2
 import pandas as pd
 from psycopg2.extras import RealDictCursor 
 import io
-import xlsxwriter # Importamos para asegurar que pandas lo reconozca para Excel
+import xlsxwriter 
+
+# --- CONFIGURACIÓN DE NOMBRES ---
+# 'nombre_medio' de la BD se interpreta como 'fase_cultivo'
+FASE_COLUMNA = 'nombre_medio' 
+# 'especie_planta' es la nueva columna (debe existir en la BD)
+ESPECIE_COLUMNA = 'especie_planta' 
+
 
 # --- Función para obtener la conexión a la base de datos ---
 def get_db_connection():
@@ -19,7 +26,6 @@ def get_db_connection():
             user=st.secrets["postgres"]["user"],
             password=st.secrets["postgres"]["password"],
             connect_timeout=5,
-            # SOLUCIÓN SSL: Neon lo requiere
             sslmode='require' 
         )
         return conn
@@ -35,21 +41,22 @@ def get_db_connection():
 
 
 # --- Función para insertar un nuevo registro ---
-def insertar_medio_cultivo(nombre, ingrediente, concentracion, unidad):
+def insertar_medio_cultivo(especie, fase, ingrediente, concentracion, unidad):
     conn = None 
     cur = None
     try:
         conn = get_db_connection() # Obtiene una conexión NUEVA
         cur = conn.cursor()
         
-        sql = """
-        INSERT INTO medios_cultivo (nombre_medio, ingrediente, concentracion, unidad) 
-        VALUES (%s, %s, %s, %s);
+        # Insertamos especie_planta (el nuevo campo) y nombre_medio (que es la fase)
+        sql = f"""
+        INSERT INTO medios_cultivo ({ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente, concentracion, unidad) 
+        VALUES (%s, %s, %s, %s, %s);
         """
-        cur.execute(sql, (nombre, ingrediente, float(concentracion), unidad))
+        cur.execute(sql, (especie, fase, ingrediente, float(concentracion), unidad))
         
         conn.commit()
-        st.success(f"¡Ingrediente '{ingrediente}' guardado para el medio de cultivo '{nombre}'!")
+        st.success(f"¡Ingrediente '{ingrediente}' guardado para {especie}/{fase}!")
         return True
         
     except psycopg2.Error as e:
@@ -59,20 +66,19 @@ def insertar_medio_cultivo(nombre, ingrediente, concentracion, unidad):
     finally:
         if cur:
             cur.close()
-        # Se cierra la conexión específica de esta función
         if conn:
             conn.close() 
 
-# --- Función para seleccionar y obtener todos los registros ---
+# --- Función para obtener todos los registros ---
 def obtener_medios_cultivo():
     conn = None
     cur = None
     try:
-        conn = get_db_connection() # Obtiene una conexión NUEVA
-        # Usamos RealDictCursor para obtener los resultados como diccionarios.
+        conn = get_db_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         
-        sql = "SELECT id, nombre_medio, ingrediente, concentracion, unidad FROM medios_cultivo ORDER BY nombre_medio, ingrediente;"
+        # Seleccionamos todas las columnas, incluyendo la nueva especie
+        sql = f"SELECT id, {ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente, concentracion, unidad FROM medios_cultivo ORDER BY {ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente;"
         cur.execute(sql)
         
         registros = cur.fetchall()
@@ -85,31 +91,47 @@ def obtener_medios_cultivo():
     finally:
         if cur:
             cur.close()
-        # Se cierra la conexión específica de esta función
         if conn:
             conn.close()
 
-# --- CAMBIO APLICADO AQUÍ ---
-# Función para obtener todos los nombres de medios de cultivo únicos
-def obtener_nombres_medios_cultivo():
+# --- Función para obtener todos los nombres de ESPECIES únicos ---
+def obtener_nombres_especies():
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Selecciona los nombres únicos y los ordena
-        cur.execute("SELECT DISTINCT nombre_medio FROM medios_cultivo ORDER BY nombre_medio;")
-        # Retorna una lista plana de nombres
+        # Selecciona los nombres únicos de especies
+        cur.execute(f"SELECT DISTINCT {ESPECIE_COLUMNA} FROM medios_cultivo WHERE {ESPECIE_COLUMNA} IS NOT NULL AND {ESPECIE_COLUMNA} != '' ORDER BY {ESPECIE_COLUMNA};")
         return [row[0] for row in cur.fetchall()]
     except psycopg2.Error as e:
-        # En el despliegue no queremos mostrar errores internos al usuario final
-        print(f"Error al obtener nombres de medios de cultivo: {e}")
+        print(f"Error al obtener nombres de especies: {e}")
         return []
     finally:
         if cur:
             cur.close()
         if conn:
             conn.close()
+
+# --- Función para obtener todas las FASES de cultivo únicas ---
+def obtener_nombres_fases():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # Selecciona los nombres únicos de fases (antes fórmulas)
+        cur.execute(f"SELECT DISTINCT {FASE_COLUMNA} FROM medios_cultivo WHERE {FASE_COLUMNA} IS NOT NULL AND {FASE_COLUMNA} != '' ORDER BY {FASE_COLUMNA};")
+        return [row[0] for row in cur.fetchall()]
+    except psycopg2.Error as e:
+        print(f"Error al obtener nombres de fases: {e}")
+        return []
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
 
 # --- Función para eliminar un registro por ID ---
 def eliminar_medio_cultivo(registro_id):
@@ -119,7 +141,6 @@ def eliminar_medio_cultivo(registro_id):
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Consulta SQL para eliminar la fila específica
         sql = "DELETE FROM medios_cultivo WHERE id = %s;"
         cur.execute(sql, (registro_id,))
         
@@ -137,40 +158,34 @@ def eliminar_medio_cultivo(registro_id):
         if conn:
             conn.close()
 
-# --- Función Auxiliar para la Descarga ---
+# --- Funciones Auxiliares para la Descarga ---
 def convertir_a_csv(df):
-    # Genera el contenido del CSV como un string
     return df.to_csv(index=False).encode('utf-8')
 
 def convertir_a_excel(df):
-    # Requiere el paquete openpyxl para funcionar en Streamlit Cloud
     output = io.BytesIO()
-    # Escribe el DataFrame en el buffer de BytesIO
-    # CAMBIO DE NOMBRE DE LA HOJA INTERNA DEL ARCHIVO EXCEL
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Medios_de_Cultivo')
-    # Devuelve el contenido del buffer
     return output.getvalue()
 
 # --- Función para actualizar un registro por ID ---
-def actualizar_medio_cultivo(registro_id, nombre, ingrediente, concentracion, unidad):
+def actualizar_medio_cultivo(registro_id, especie, fase, ingrediente, concentracion, unidad):
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Consulta SQL para actualizar los campos basándose en el ID
-        sql = """
+        # Actualizamos la nueva columna 'especie_planta' y 'nombre_medio' (la fase)
+        sql = f"""
         UPDATE medios_cultivo 
-        SET nombre_medio = %s, ingrediente = %s, concentracion = %s, unidad = %s
+        SET {ESPECIE_COLUMNA} = %s, {FASE_COLUMNA} = %s, ingrediente = %s, concentracion = %s, unidad = %s
         WHERE id = %s;
         """
-        # Ejecutar con los nuevos valores y el ID al final
-        cur.execute(sql, (nombre, ingrediente, float(concentracion), unidad, registro_id))
+        cur.execute(sql, (especie, fase, ingrediente, float(concentracion), unidad, registro_id))
         
         conn.commit()
-        st.success(f"Registro ID {registro_id} actualizado exitosamente a: {nombre} - {ingrediente}")
+        st.success(f"Registro ID {registro_id} actualizado exitosamente a: {especie} / {fase} - {ingrediente}")
         return True
         
     except psycopg2.Error as e:
@@ -184,69 +199,75 @@ def actualizar_medio_cultivo(registro_id, nombre, ingrediente, concentracion, un
             conn.close()
 
 # --- AQUÍ COMIENZA LA INTERFAZ DE USUARIO ---
-st.title("🌱 Gestión de Medios de Cultivo")
+st.title("🌱 Gestión de Medios de Cultivo (Especies y Fases)")
 
-# Lógica de verificación de conexión (solo para mostrar el mensaje de éxito)
+# Lógica de verificación de conexión 
 try:
     conn = get_db_connection()
     st.sidebar.success("✅ Conexión a la base de datos establecida.")
-    conn.close() # Cierra la conexión de prueba inmediatamente
+    conn.close() 
 except Exception:
-    # Si get_db_connection falla, ya habrá emitido un error, no es necesario hacer nada más aquí
     pass
 
-# --- Obtener opciones para el formulario de registro (tab1) ---
-# CAMBIO APLICADO AQUÍ
-nombres_medios = obtener_nombres_medios_cultivo()
+# --- OBTENER OPCIONES GLOBALES PARA REGISTRO Y FILTRO ---
+nombres_especies_existentes = obtener_nombres_especies()
+nombres_fases_existentes = obtener_nombres_fases()
 
-# Creamos la lista de opciones para el selectbox de registro
-opciones_registro = ["-- Seleccionar Medio de Cultivo --", "Nuevo Medio de Cultivo"] + nombres_medios
+# Opciones de Especie para el formulario de registro (tab1)
+opciones_especie = ["-- Seleccionar Especie --", "Nueva Especie"] + nombres_especies_existentes
+opciones_especie = list(set(opciones_especie))
+opciones_especie.sort()
 
-# Usamos set() para eliminar duplicados y luego volvemos a listar, por si acaso
-opciones_registro = list(set(opciones_registro))
-opciones_registro.sort() # Opcional, para ordenar alfabéticamente
+# Opciones de Fase para el formulario de registro (tab1)
+opciones_fase = ["-- Seleccionar Fase --", "Nueva Fase"] + nombres_fases_existentes
+opciones_fase = list(set(opciones_fase))
+opciones_fase.sort()
 
 # TABS
-# CAMBIO APLICADO AQUÍ
-tab1, tab2, tab3 = st.tabs(["➕ Registrar Ingrediente", "📋 Catálogo / Edición", "🧪 Medios de Cultivo Completos"])
+tab1, tab2, tab3 = st.tabs(["➕ Registrar Ingrediente", "📋 Catálogo / Edición", "🧪 Medios de Cultivo por Especie"])
 
 with tab1:
-    st.subheader("➕ Registrar Nuevo Ingrediente de Medio de Cultivo")
+    st.subheader("➕ Registrar Nuevo Ingrediente por Especie/Fase")
     
-    # 1. El formulario completo debe estar dentro de st.form
     with st.form(key="form_registrar_medio"):
         
-        # Usamos el selectbox con las opciones que definimos arriba
-        # CAMBIO APLICADO AQUÍ
-        nombre_medio = st.selectbox(
-            "Nombre del Medio de Cultivo:", 
-            options=opciones_registro,
-            key="input_nombre_medio"
+        # --- INPUT ESPECIE (NUEVO) ---
+        especie = st.selectbox(
+            "1. Especie de Planta:", 
+            options=opciones_especie,
+            key="input_especie"
         )
+        if especie == "Nueva Especie":
+            especie = st.text_input("Escribe el nombre de la Nueva Especie:", key="nuevo_nombre_especie").strip()
+            if not especie:
+                especie = None
+
+        # --- INPUT FASE DE CULTIVO (Antes, Nombre de Medio) ---
+        fase_cultivo = st.selectbox(
+            "2. Fase de Cultivo (Medio):", 
+            options=opciones_fase,
+            key="input_fase_cultivo"
+        )
+        if fase_cultivo == "Nueva Fase":
+            fase_cultivo = st.text_input("Escribe el nombre de la Nueva Fase de Cultivo:", key="nuevo_fase_cultivo").strip()
+            if not fase_cultivo:
+                fase_cultivo = None
+
+        st.markdown("---")
         
-        # Lógica para permitir escribir una nueva fórmula si se elige "Nueva Fórmula"
-        # CAMBIO APLICADO AQUÍ
-        if nombre_medio == "Nuevo Medio de Cultivo":
-            nombre_medio = st.text_input("Escribe el nombre del Nuevo Medio de Cultivo:", key="nuevo_nombre_medio")
-            # Esto asegura que el campo no esté vacío si se intenta registrar
-            if not nombre_medio.strip():
-                nombre_medio = None # Lo establecemos a None para que la validación posterior falle
-
         # El resto de tus campos:
-        ingrediente = st.text_input("Ingrediente (ej: Sacarosa)", key="input_ingrediente")
-        concentracion = st.number_input("Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
-        unidad = st.selectbox("Unidad de Medida", ["mg/L", "g/L", "mM"], key="input_unidad")
+        ingrediente = st.text_input("3. Ingrediente (ej: Sacarosa)", key="input_ingrediente").strip()
+        concentracion = st.number_input("4. Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
+        unidad = st.selectbox("5. Unidad de Medida", ["mg/L", "g/L", "mM"], key="input_unidad")
 
-        # 2. ¡EL BOTÓN DE ENVÍO ES OBLIGATORIO DENTRO DE st.form!
         submit_button = st.form_submit_button(label='💾 Guardar Ingrediente', type="primary")
 
         # 3. Lógica de inserción de datos
         if submit_button:
-            if nombre_medio and ingrediente and concentracion is not None:
-                # La función que inserta en la base de datos
-                insertar_medio_cultivo(nombre_medio, ingrediente, concentracion, unidad)
+            if especie and fase_cultivo and ingrediente and concentracion is not None:
+                insertar_medio_cultivo(especie, fase_cultivo, ingrediente, concentracion, unidad)
             else:
-                st.error("Todos los campos son obligatorios. Por favor, revisa.")
+                st.error("Todos los campos (Especie, Fase, Ingrediente, Concentración) son obligatorios. Por favor, revisa.")
 
 # Inicializa una variable de estado para saber qué ID se está editando
 if 'edit_id' not in st.session_state:
@@ -261,31 +282,26 @@ with tab2:
     if datos_medios:
         df = pd.DataFrame(datos_medios)
         
-        # --- LÓGICA DE FILTRADO ---
-        # CAMBIO APLICADO AQUÍ
-        nombres_medios = obtener_nombres_medios_cultivo()
+        # --- LÓGICA DE FILTRADO POR ESPECIE ---
+        nombres_especies_filtrado = obtener_nombres_especies()
         
-        # Insertar la opción "Mostrar todos" al principio
-        # CAMBIO APLICADO AQUÍ
-        opciones_filtro = ["Mostrar todos"] + nombres_medios
+        opciones_filtro_especie = ["Mostrar todos"] + nombres_especies_filtrado
 
-        # Crea el SelectBox para elegir la fórmula
-        # CAMBIO APLICADO AQUÍ
-        filtro_seleccionado = st.selectbox(
-            "Filtrar por nombre de Medio de Cultivo:",
-            options=opciones_filtro,
+        # Crea el SelectBox para elegir la Especie
+        filtro_seleccionado_especie = st.selectbox(
+            "Filtrar por Especie de Planta:",
+            options=opciones_filtro_especie,
             index=0
         )
-
-        # Aplicar el filtro si no se seleccionó "Mostrar todos"
-        if filtro_seleccionado != "Mostrar todos":
-            df_filtrado = df[df['nombre_medio'] == filtro_seleccionado]
-            # CAMBIO APLICADO AQUÍ
-            st.info(f"Mostrando solo ingredientes para el medio de cultivo: **{filtro_seleccionado}**")
-        else:
-            df_filtrado = df # Si es "Mostrar todos", usa el DataFrame completo
-            st.info("Mostrando todos los ingredientes en el catálogo.")
         
+        # Aplicar el filtro de Especie
+        if filtro_seleccionado_especie != "Mostrar todos":
+            df_filtrado = df[df[ESPECIE_COLUMNA] == filtro_seleccionado_especie]
+            st.info(f"Mostrando solo ingredientes para la especie: **{filtro_seleccionado_especie}**")
+        else:
+            df_filtrado = df 
+            st.info("Mostrando todos los ingredientes en el catálogo.")
+
         # --- BOTONES DE DESCARGA ---
         if not df_filtrado.empty:
             
@@ -314,24 +330,34 @@ with tab2:
                     type="secondary"
                 )
 
-        st.markdown("---") # Separador visual
+        st.markdown("---") 
         
         # --- LÓGICA DE EDICIÓN ---
-        
-        # Si hay un ID en el estado de sesión, muestra el formulario de edición
         if st.session_state.edit_id is not None:
-            # Buscar el registro a editar, ahora buscamos en el DataFrame original (df)
             registro_a_editar = df[df['id'] == st.session_state.edit_id].iloc[0]
             
-            st.warning(f"Editando: {registro_a_editar['nombre_medio']} - {registro_a_editar['ingrediente']}")
+            st.warning(f"Editando: {registro_a_editar[ESPECIE_COLUMNA]} / {registro_a_editar[FASE_COLUMNA]} - {registro_a_editar['ingrediente']}")
             
             with st.form(key="form_editar_medio", clear_on_submit=False):
+                
                 # Campos precargados con los valores actuales del registro
-                # CAMBIO APLICADO AQUÍ
-                nombre_medio_edit = st.text_input("Nombre del Medio de Cultivo", value=registro_a_editar['nombre_medio'], key="edit_nombre")
+                # CAMPO ESPECIE A EDITAR
+                especie_edit = st.text_input("Especie de Planta", value=registro_a_editar[ESPECIE_COLUMNA], key="edit_especie")
+                # CAMPO FASE A EDITAR
+                fase_cultivo_edit = st.text_input("Fase de Cultivo", value=registro_a_editar[FASE_COLUMNA], key="edit_fase_cultivo")
+
                 ingrediente_edit = st.text_input("Ingrediente", value=registro_a_editar['ingrediente'], key="edit_ingrediente")
                 concentracion_edit = st.number_input("Concentración", value=float(registro_a_editar['concentracion']), format="%.4f", min_value=0.0, key="edit_concentracion")
-                unidad_edit = st.selectbox("Unidad de Medida", ["mg/L", "g/L", "mM"], index=["mg/L", "g/L", "mM"].index(registro_a_editar['unidad']), key="edit_unidad")
+                
+                # Usamos los nombres de las fases existentes para el selectbox de edición
+                opciones_unidad = ["mg/L", "g/L", "mM"]
+                try:
+                    unidad_index = opciones_unidad.index(registro_a_editar['unidad'])
+                except ValueError:
+                    unidad_index = 0 # Default si no se encuentra
+                
+                unidad_edit = st.selectbox("Unidad de Medida", opciones_unidad, index=unidad_index, key="edit_unidad")
+
 
                 col_update, col_cancel = st.columns(2)
 
@@ -340,7 +366,8 @@ with tab2:
                     if st.form_submit_button("💾 Guardar Cambios", type="primary"):
                         actualizar_medio_cultivo(
                             st.session_state.edit_id, 
-                            nombre_medio_edit, 
+                            especie_edit, 
+                            fase_cultivo_edit, 
                             ingrediente_edit, 
                             concentracion_edit, 
                             unidad_edit
@@ -360,15 +387,14 @@ with tab2:
         for index, row in df_filtrado.iterrows(): 
             col1, col2, col3 = st.columns([0.7, 0.15, 0.15]) 
             
-            # Columna 1: Información del registro
+            # Muestra Especie / Fase
             col1.write(
-                f"**{row['nombre_medio']}** — {row['ingrediente']} "
+                f"**{row[ESPECIE_COLUMNA]}** / **{row[FASE_COLUMNA]}** — {row['ingrediente']} "
                 f"({row['concentracion']:.4f} {row['unidad']})"
             )
             
             # Columna 2: Botón de Editar
             with col2:
-                # Función auxiliar para manejar el clic en editar
                 def set_edit_mode(record_id):
                     st.session_state.edit_id = record_id
 
@@ -381,7 +407,6 @@ with tab2:
 
             # Columna 3: Botón de Eliminar
             with col3:
-                # El key del formulario y del botón es crucial
                 with st.form(key=f"delete_form_{row['id']}", clear_on_submit=False):
                     st.form_submit_button(
                         "🗑️", 
@@ -390,66 +415,59 @@ with tab2:
                         args=(row['id'],) 
                     )
 
-        # Muestra la tabla completa (opcional, para referencia)
         st.caption("Estructura de la base de datos (Referencia):")
-        st.dataframe(df_filtrado.drop(columns=['id']), use_container_width=True)
+        # Mostrar la tabla filtrada incluyendo el nuevo campo 'especie_planta'
+        df_display = df_filtrado.drop(columns=['id']).rename(columns={FASE_COLUMNA: 'Fase de Cultivo', ESPECIE_COLUMNA: 'Especie'})
+        st.dataframe(df_display, use_container_width=True)
 
-    else: # <-- ESTE ES EL FINAL LIMPIO DEL BLOQUE
+    else: 
         st.info("Aún no hay medios de cultivo registrados en la base de datos.")
+        with tab3:
+    st.subheader("🧪 Composición Detallada por Especie y Fase")
+
+    # Obtenemos TODAS las especies registradas
+    nombres_especies = obtener_nombres_especies()
     
-with tab3:
-    # CAMBIO APLICADO AQUÍ
-    st.subheader("🧪 Composición Detallada de Medios de Cultivo")
-
-    # CAMBIO APLICADO AQUÍ
-    nombres_medios = obtener_nombres_medios_cultivo()
-
-    if not nombres_medios:
-        # CAMBIO APLICADO AQUÍ
-        st.info("Aún no hay medios de cultivo registrados para mostrar.")
+    if not nombres_especies:
+        st.info("Aún no hay especies ni medios de cultivo registrados para mostrar.")
     else:
-        # CAMBIO APLICADO AQUÍ
-        st.markdown(f"**Total de Medios de Cultivo Únicos Registrados:** **{len(nombres_medios)}**")
+        st.markdown(f"**Total de Especies con Medios Registrados:** **{len(nombres_especies)}**")
         st.markdown("---")
         
-        # 1. Iterar sobre cada nombre de fórmula único
-        # CAMBIO APLICADO AQUÍ
-        for nombre in nombres_medios:
+        datos_medios = obtener_medios_cultivo()
+        if not datos_medios:
+            st.info("No hay datos de ingredientes para agrupar.")
+            pass
+        else:
+            df_completo = pd.DataFrame(datos_medios)
             
-            # 2. Obtener todos los ingredientes para esta fórmula específica
-            conn = None
-            cur = None
-            try:
-                conn = get_db_connection()
-                cur = conn.cursor()
-                # Consulta SQL para obtener solo los ingredientes de la fórmula actual
-                sql = "SELECT ingrediente, concentracion, unidad FROM medios_cultivo WHERE nombre_medio = %s ORDER BY ingrediente;"
-                cur.execute(sql, (nombre,))
-                ingredientes = cur.fetchall()
-            
-                # 3. Presentar los datos
-                if ingredientes:
-                    
-                    # Título de la Fórmula
-                    # CAMBIO APLICADO AQUÍ
-                    st.header(f"🧬 Medio de Cultivo: {nombre}")
-                    
-                    # Convertir a DataFrame y formatear la concentración
-                    df_formula = pd.DataFrame(ingredientes, columns=['Ingrediente', 'Concentración', 'Unidad'])
-                    
-                    # Formatear la concentración para que se vea más limpio (opcional)
-                    df_formula['Concentración'] = df_formula['Concentración'].apply(lambda x: f"{x:.4f}")
-                    
-                    # Mostrar la tabla
-                    st.dataframe(df_formula, hide_index=True, use_container_width=True)
-                    st.markdown("---")
-                    
-            except psycopg2.Error as e:
-                # CAMBIO APLICADO AQUÍ
-                st.error(f"Error al cargar el medio de cultivo {nombre}: {e}")
+            # 1. Iterar sobre cada especie única
+            for especie in nombres_especies:
+                st.header(f"🌿 Especie: {especie}")
                 
-            finally:
-                if cur:
-                    cur.close()
-                if conn:
-                    conn.close()
+                # Filtrar el DF por la especie actual
+                df_especie = df_completo[df_completo[ESPECIE_COLUMNA] == especie]
+                
+                # Obtener las fases (nombre_medio) únicas para esta especie
+                fases_especie = df_especie[FASE_COLUMNA].unique()
+                
+                # 2. Iterar sobre cada fase de cultivo dentro de la especie
+                for fase in fases_especie:
+                    
+                    with st.expander(f"🧬 Fase de Cultivo: **{fase}**"):
+                        
+                        # Filtrar los ingredientes específicos para esta Especie y Fase
+                        df_fase = df_especie[df_especie[FASE_COLUMNA] == fase]
+                        
+                        # Seleccionar solo las columnas necesarias y renombrar
+                        df_display_fase = df_fase[['ingrediente', 'concentracion', 'unidad']].copy()
+                        df_display_fase.columns = ['Ingrediente', 'Concentración', 'Unidad']
+
+                        # Formatear la concentración
+                        df_display_fase['Concentración'] = df_display_fase['Concentración'].apply(lambda x: f"{x:.4f}")
+                        
+                        # Mostrar la tabla
+                        st.dataframe(df_display_fase, hide_index=True, use_container_width=True)
+
+                st.markdown("---")
+                
