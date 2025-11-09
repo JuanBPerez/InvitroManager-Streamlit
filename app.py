@@ -196,7 +196,7 @@ with tab1:
         st.subheader("Registrar Ingrediente de Fórmula")
 
         # Campos de Entrada
-        nombre_medio = st.text_input("Nombre de la Fórmula (ej: MS Estándar)", max_chars=100, key="nombre_input")
+        nombre_medio = st.selectbox("Nombre de la Fórmula:", opciones_registro)
         ingrediente = st.text_input("Ingrediente (ej: Sacarosa)", max_chars=100, key="ingrediente_input")
         concentracion = st.number_input("Concentración (valor numérico)", min_value=0.0, format="%.4f", key="concentracion_input")
         unidad = st.selectbox("Unidad de Medida", ["mg/L", "g/L", "mM"], key="unidad_input")
