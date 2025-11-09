@@ -187,27 +187,55 @@ except Exception:
     # Si get_db_connection falla, ya habrá emitido un error, no es necesario hacer nada más aquí
     pass
 
+# --- Obtener opciones para el formulario de registro (tab1) ---
+# Usamos la función ya existente para obtener las fórmulas
+nombres_formulas = obtener_nombres_formulas()
+
+# Creamos la lista de opciones para el selectbox de registro
+opciones_registro = ["-- Seleccionar Fórmula --", "Nueva Fórmula"] + nombres_formulas
+
+# Usamos set() para eliminar duplicados y luego volvemos a listar, por si acaso
+opciones_registro = list(set(opciones_registro))
+opciones_registro.sort() # Opcional, para ordenar alfabéticamente
 
 # TABS
 tab1, tab2 = st.tabs(["➕ Registrar Ingrediente", "📋 Ver Fórmulas Guardadas"])
 
 with tab1:
-    with st.form("form_nuevo_medio"):
-        st.subheader("Registrar Ingrediente de Fórmula")
-
-        # Campos de Entrada
-        nombre_medio = st.selectbox("Nombre de la Fórmula:", opciones_registro)
-        ingrediente = st.text_input("Ingrediente (ej: Sacarosa)", max_chars=100, key="ingrediente_input")
-        concentracion = st.number_input("Concentración (valor numérico)", min_value=0.0, format="%.4f", key="concentracion_input")
-        unidad = st.selectbox("Unidad de Medida", ["mg/L", "g/L", "mM"], key="unidad_input")
-
-        submitted = st.form_submit_button("Guardar Ingrediente en la DB")
+    st.subheader("➕ Registrar Nuevo Ingrediente de Fórmula")
+    
+    # 1. El formulario completo debe estar dentro de st.form
+    with st.form(key="form_registrar_medio"):
         
-        if submitted:
-            if nombre_medio and ingrediente:
+        # Usamos el selectbox con las opciones que definimos arriba
+        nombre_medio = st.selectbox(
+            "Nombre de la Fórmula:", 
+            options=opciones_registro,
+            key="input_nombre_medio"
+        )
+        
+        # Lógica para permitir escribir una nueva fórmula si se elige "Nueva Fórmula"
+        if nombre_medio == "Nueva Fórmula":
+            nombre_medio = st.text_input("Escribe el nombre de la Nueva Fórmula:", key="nuevo_nombre_medio")
+            # Esto asegura que el campo no esté vacío si se intenta registrar
+            if not nombre_medio.strip():
+                nombre_medio = None # Lo establecemos a None para que la validación posterior falle
+
+        # El resto de tus campos:
+        ingrediente = st.text_input("Ingrediente (ej: Sacarosa)", key="input_ingrediente")
+        concentracion = st.number_input("Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
+        unidad = st.selectbox("Unidad de Medida", ["mg/L", "g/L", "mM"], key="input_unidad")
+
+        # 2. ¡EL BOTÓN DE ENVÍO ES OBLIGATORIO DENTRO DE st.form!
+        submit_button = st.form_submit_button(label='💾 Guardar Ingrediente', type="primary")
+
+        # 3. Lógica de inserción de datos
+        if submit_button:
+            if nombre_medio and ingrediente and concentracion is not None:
+                # La función que inserta en la base de datos
                 insertar_medio_cultivo(nombre_medio, ingrediente, concentracion, unidad)
             else:
-                st.warning("El Nombre de la Fórmula y el Ingrediente son obligatorios.")
+                st.error("Todos los campos son obligatorios. Por favor, revisa.")
 
 # Inicializa una variable de estado para saber qué ID se está editando
 if 'edit_id' not in st.session_state:
