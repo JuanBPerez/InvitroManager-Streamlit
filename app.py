@@ -338,7 +338,7 @@ with tab2:
                 # El key del formulario y del botón es crucial
                 with st.form(key=f"delete_form_{row['id']}", clear_on_submit=False):
                     st.form_submit_button(
-                        "🗑️ Eliminar", 
+                        "🗑️", 
                         type="primary", 
                         on_click=eliminar_medio_cultivo, 
                         args=(row['id'],) 
