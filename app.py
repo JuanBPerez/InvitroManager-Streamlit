@@ -136,6 +136,21 @@ def eliminar_medio_cultivo(registro_id):
         if conn:
             conn.close()
 
+# --- Función Auxiliar para la Descarga ---
+def convertir_a_csv(df):
+    # Genera el contenido del CSV como un string
+    return df.to_csv(index=False).encode('utf-8')
+
+def convertir_a_excel(df):
+    # Requiere el paquete openpyxl para funcionar en Streamlit Cloud
+    import io
+    output = io.BytesIO()
+    # Escribe el DataFrame en el buffer de BytesIO
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Fórmulas')
+    # Devuelve el contenido del buffer
+    return output.getvalue()
+
 # --- Aquí están get_db_connection, insertar_medio_cultivo, obtener_medios_cultivo...
 
 # --- Función para actualizar un registro por ID (Debe empezar en la línea 121) ---
@@ -270,7 +285,36 @@ with tab2:
         else:
             df_filtrado = df # Si es "Mostrar todos", usa el DataFrame completo
             st.info("Mostrando todos los ingredientes en el catálogo.")
-        
+        # --- BOTONES DE DESCARGA ---
+        if not df_filtrado.empty:
+            
+            # Quitar la columna 'id' que es interna de la base de datos antes de descargar
+            df_descarga = df_filtrado.drop(columns=['id'])
+            
+            col_csv, col_excel = st.columns(2)
+            
+            # Botón de Descarga CSV
+            with col_csv:
+                st.download_button(
+                    label="⬇️ Descargar como CSV",
+                    data=convertir_a_csv(df_descarga),
+                    file_name='catalogo_invitro.csv',
+                    mime='text/csv',
+                    type="secondary"
+                )
+            
+            # Botón de Descarga Excel
+            with col_excel:
+                st.download_button(
+                    label="⬇️ Descargar como Excel (XLSX)",
+                    data=convertir_a_excel(df_descarga),
+                    file_name='catalogo_invitro.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    type="secondary"
+                )
+
+        st.markdown("---") # Separador visual
+        # ... (el resto del código de la pestaña 2 continúa aquí) ...
         # --- LÓGICA DE EDICIÓN ---
         
         # Si hay un ID en el estado de sesión, muestra el formulario de edición
