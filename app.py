@@ -209,6 +209,8 @@ def check_password():
         st.title("🔐 Acceso al Gestor de Medios")
         with st.form("Login"):
             st.text_input("Usuario:", key="username_input")
+            # El campo de contraseña no acepta el atributo autocomplete, 
+            # así que lo forzamos con JS después del renderizado.
             st.text_input("Contraseña:", type="password", key="password_input")
             
             st.form_submit_button("Entrar", on_click=password_entered, type="primary")
@@ -218,6 +220,22 @@ def check_password():
             if st.session_state.authenticated == False and 'username_input' in st.session_state and st.session_state["username_input"]:
                 st.error("Usuario o contraseña incorrectos.")
         
+        # --- FIX: Inyección de JS para Deshabilitar Sugerencias del Navegador ---
+        # Buscamos todos los inputs de tipo password y forzamos autocomplete='off'
+        st.markdown("""
+            <script>
+            // Aseguramos que se ejecute después de que se cargue el DOM
+            window.onload = function() {
+                // Buscamos todos los campos de contraseña en la página
+                const passwordInputs = document.querySelectorAll('input[type="password"]');
+                passwordInputs.forEach(input => {
+                    // Forzamos el atributo a 'off' para evitar autocompletar y sugerencias
+                    input.setAttribute('autocomplete', 'off');
+                });
+            };
+            </script>
+            """, unsafe_allow_html=True)
+
         st.stop() # Detiene la ejecución para no mostrar la UI principal
         return False 
     
