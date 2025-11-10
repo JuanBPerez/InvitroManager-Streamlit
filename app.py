@@ -209,8 +209,7 @@ def check_password():
         st.title("🔐 Acceso al Gestor de Medios")
         with st.form("Login"):
             st.text_input("Usuario:", key="username_input")
-            # El campo de contraseña no acepta el atributo autocomplete, 
-            # así que lo forzamos con JS después del renderizado.
+            # Este campo de contraseña es el que debemos modificar con JS
             st.text_input("Contraseña:", type="password", key="password_input")
             
             st.form_submit_button("Entrar", on_click=password_entered, type="primary")
@@ -220,21 +219,34 @@ def check_password():
             if st.session_state.authenticated == False and 'username_input' in st.session_state and st.session_state["username_input"]:
                 st.error("Usuario o contraseña incorrectos.")
         
-        # --- FIX: Inyección de JS para Deshabilitar Sugerencias del Navegador ---
-        # Buscamos todos los inputs de tipo password y forzamos autocomplete='off'
+        # --- FIX ROBUSTO: Inyección de JS para Deshabilitar Sugerencias de Contraseña ---
+        # El navegador ignora 'off'. Usamos 'current-password' para forzarlo a NO sugerir una nueva.
         st.markdown("""
             <script>
-            // Aseguramos que se ejecute después de que se cargue el DOM
-            window.onload = function() {
-                // Buscamos todos los campos de contraseña en la página
-                const passwordInputs = document.querySelectorAll('input[type="password"]');
-                passwordInputs.forEach(input => {
-                    // Forzamos el atributo a 'off' para evitar autocompletar y sugerencias
-                    input.setAttribute('autocomplete', 'off');
-                });
-            };
+            // Usamos un pequeño retraso para asegurar que Streamlit ha renderizado el DOM
+            setTimeout(function() {
+                // 1. Buscamos el formulario de LOGIN (asumiendo que es el primero o el único visible con el testid)
+                const loginForm = document.querySelector('[data-testid="stForm"]'); 
+
+                if (loginForm) {
+                    // 2. Dentro de ese formulario, buscamos el input de contraseña
+                    const passwordInput = loginForm.querySelector('input[type="password"]');
+                    if (passwordInput) {
+                        // 3. Establecemos el atributo a 'current-password', que es la forma más efectiva
+                        //    de decirle al navegador que es un campo de login para una contraseña existente.
+                        passwordInput.setAttribute('autocomplete', 'current-password');
+                    }
+                    
+                    // 4. Buscamos el campo de usuario y le asignamos 'username' para ayudar al autocompletado de credenciales
+                    const usernameInput = loginForm.querySelector('input[type="text"]');
+                    if (usernameInput) {
+                        usernameInput.setAttribute('autocomplete', 'username');
+                    }
+                }
+            }, 100); 
             </script>
             """, unsafe_allow_html=True)
+
 
         st.stop() # Detiene la ejecución para no mostrar la UI principal
         return False 
