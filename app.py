@@ -406,7 +406,7 @@ def app_ui():
     st.sidebar.button("🚪 Cerrar Sesión", on_click=logout)
     
     # 2. Título y Check de Conexión
-    st.title("🌱 Gestor de Medios de Cultivo In Vitro")
+    st.title("🌱 Medios de Cultivo")
 
     try:
         conn = get_db_connection()
