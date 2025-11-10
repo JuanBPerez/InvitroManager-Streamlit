@@ -629,27 +629,37 @@ def app_ui():
 
     # ----------------- TAB 4: ADMIN (solo si es administrador) -----------------
     if tab4:
-        with tab4:
-            st.subheader("🛠️ Gestión de Usuarios (Administrador)")
+        st.subheader("🛠️ Gestión de Usuarios (Administrador)")
+        
+        # --- LÓGICA DE MANEJO DEL FORMULARIO DE ADMINISTRADOR ---
+        def handle_add_user_submit():
+            """Función callback ejecutada al presionar el botón de crear usuario."""
+            # Los valores se acceden directamente del st.session_state
+            new_username = st.session_state.new_username_input.strip()
+            new_password = st.session_state.new_password_input.strip()
+            is_admin_check = st.session_state.new_is_admin_check
             
-            # --- Formulario de Registro de Nuevo Usuario ---
-            st.markdown("### Registrar Nuevo Usuario")
-            with st.form("form_add_user"):
-                new_username = st.text_input("Nombre de Usuario", key="new_username_input").strip()
-                new_password = st.text_input("Contraseña", type="password", key="new_password_input").strip()
-                is_admin_check = st.checkbox("¿Es Administrador?", key="new_is_admin_check", value=False)
-                
-                if st.form_submit_button("Crear Usuario", type="primary"):
-                    if new_username and new_password:
-                        add_user_to_db(new_username, new_password, is_admin_check)
-                        # Opcional: forzar rerun para ver el resultado inmediatamente
-                        st.rerun() 
-                    else:
-                        st.error("Rellena el usuario y la contraseña.")
+            if new_username and new_password:
+                if add_user_to_db(new_username, new_password, is_admin_check):
+                    # Solo recargamos si la adición fue exitosa para limpiar los campos
+                    st.rerun()
+            else:
+                st.error("Rellena el usuario y la contraseña.")
+
+
+        # --- Formulario de Registro de Nuevo Usuario ---
+        st.markdown("### Registrar Nuevo Usuario")
+        with st.form("form_add_user"):
+            st.text_input("Nombre de Usuario", key="new_username_input", value="") # Valor vacío para forzar la limpieza post-submit
+            st.text_input("Contraseña", type="password", key="new_password_input", value="")
+            st.checkbox("¿Es Administrador?", key="new_is_admin_check", value=False)
             
-            st.markdown("---")
-            
-            st.info("La gestión completa (edición/eliminación de usuarios existentes) se recomienda hacer directamente en tu herramienta de base de datos (Neon/pSQL) por seguridad.")
+            # El botón llama a la función de manejo
+            st.form_submit_button("Crear Usuario", type="primary", on_click=handle_add_user_submit)
+        
+        st.markdown("---")
+        
+        st.info("La gestión completa (edición/eliminación de usuarios existentes) se recomienda hacer directamente en tu herramienta de base de datos (Neon/pSQL) por seguridad.")
 
 # ====================================================================
 #              PUNTO DE ENTRADA DE LA APLICACIÓN
