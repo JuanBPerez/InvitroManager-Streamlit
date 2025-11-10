@@ -61,21 +61,51 @@ def get_db_connection():
         st.stop()
 
 def get_user_from_db(username):
-    """Busca un usuario por nombre y devuelve su hash y estado de admin."""
+    """Busca un usuario por nombre y devuelve su hash (como bytes) y estado de admin."""
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Nota: La columna hashed_password debe ser de tipo BYTEA en PostgreSQL
+        # La columna hashed_password debe ser de tipo BYTEA en PostgreSQL
         sql = "SELECT hashed_password, is_admin FROM users WHERE username = %s;"
         cur.execute(sql, (username,))
         result = cur.fetchone()
         
         if result:
-            # psycopg2 fetchone devuelve una tupla, el hash está en result[0]
-            return {'hashed_password': result[0], 'is_admin': result[1]}
+            hashed_from_db = result[0]
+            
+            # --- FIX CRÍTICO ---
+            # Aseguramos que el hash devuelto sea un objeto `bytes`, ya que psycopg2 
+            # a veces lo devuelve como string codificado (ej: latin1 o ascii)
+            if isinstance(hashed_from_db, str):
+                # Intentamos decodificar el hex o asumimos latin1 si no es hex
+                try:
+                    hashed_from_db = bytes.fromhex(hashed_from_db)
+                except ValueError:
+                    hashed_from_db = hashed_from_db.encode('latin1')
+            # --- FIN FIX CRÍTICO ---
+            
+            return {'hashed_password': hashed_from_db, 'is_admin': result[1]}
         return None
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+def check_for_any_user_in_db():
+    """Verifica rápidamente si existe al menos un usuario en la tabla."""
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        sql = "SELECT 1 FROM users LIMIT 1;"
+        cur.execute(sql)
+        return cur.fetchone() is not None
+    except psycopg2.Error as e:
+        # Si falla la consulta, asumimos que no hay usuarios o hay un problema de permisos
+        st.error(f"Error al verificar la existencia de usuarios: {e}")
+        return False
     finally:
         if cur: cur.close()
         if conn: conn.close()
@@ -96,8 +126,8 @@ def add_user_to_db(username, password, is_admin=False):
         hashed_password = get_hashed_password(password)
         
         # 2. Insertar en la BD
+        # hashed_password ya es bytes, lo insertamos directamente en la columna BYTEA
         sql = "INSERT INTO users (username, hashed_password, is_admin) VALUES (%s, %s, %s);"
-        # Asegúrate de que hashed_password es bytes si la columna es BYTEA
         cur.execute(sql, (username, hashed_password, is_admin))
         conn.commit()
         
@@ -130,11 +160,9 @@ def check_password():
         user_data = get_user_from_db(username)
         
         if user_data:
-            # Comprobación de que el hash devuelto es de tipo bytes (necesario para check_hashed_password)
+            # El hash ya viene en formato bytes gracias al FIX en get_user_from_db
             hashed_from_db = user_data['hashed_password']
-            if isinstance(hashed_from_db, str):
-                hashed_from_db = hashed_from_db.encode('latin1') # Si psycopg2 lo devuelve como str
-
+            
             if check_hashed_password(password, hashed_from_db):
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = username
@@ -147,22 +175,25 @@ def check_password():
     # 1. Si NO está autenticado, muestra el formulario de Login o Setup
     if not st.session_state.authenticated:
         
+        # Utilizamos la nueva función para verificar si existe CUALQUIER usuario
+        users_exist = check_for_any_user_in_db()
+
         # --- Check para inicializar el primer usuario si la tabla está vacía ---
-        # Usamos un nombre de usuario temporal para verificar si existe ALGÚN usuario
-        if not get_user_from_db("initial_admin_placeholder"): 
+        if not users_exist: 
             st.warning("⚠️ No hay usuarios registrados. Crea el primer usuario administrador.")
             with st.form("Initial_Admin_Setup"):
-                # Se utiliza st.session_state para mantener los valores
                 admin_user = st.text_input("Usuario Administrador:", key="admin_user_setup").strip()
                 admin_password = st.text_input("Contraseña:", type="password", key="admin_password_setup").strip()
                 
                 if st.form_submit_button("Crear Administrador Inicial", type="primary"):
                     if admin_user and admin_password:
                         if add_user_to_db(admin_user, admin_password, is_admin=True):
-                            st.success("Administrador creado con éxito. ¡Inicia sesión ahora!")
+                            # Si la creación fue exitosa, pre-rellenamos el login para facilitar
                             st.session_state["username_input"] = admin_user
                             st.session_state["password_input"] = admin_password
-                            st.experimental_rerun() # Forzar rerun para cargar el formulario de login
+                            st.experimental_rerun() 
+                    else:
+                        st.error("Rellena ambos campos.")
 
         # --- Formulario de Login ---
         st.title("🔐 Acceso al Gestor de Medios")
@@ -170,14 +201,12 @@ def check_password():
             st.text_input("Usuario:", key="username_input")
             st.text_input("Contraseña:", type="password", key="password_input")
             
-            # Usamos un callback en el botón para ejecutar la verificación
             st.form_submit_button("Entrar", on_click=password_entered, type="primary")
             
             # Muestra el error de login si la verificación falló en el último submit
-            if 'username_input' in st.session_state and st.session_state["username_input"] and 'password_input' in st.session_state and st.session_state["password_input"]:
-                # Streamlit ya ha ejecutado password_entered y actualizado st.session_state.authenticated
-                if st.session_state.authenticated == False:
-                    st.error("Usuario o contraseña incorrectos.")
+            # Solo si el usuario intentó un submit que resultó en autenticación fallida
+            if st.session_state.authenticated == False and 'username_input' in st.session_state and st.session_state["username_input"]:
+                st.error("Usuario o contraseña incorrectos.")
         
         st.stop() # Detiene la ejecución para no mostrar la UI principal
         return False 
@@ -186,7 +215,7 @@ def check_password():
     return True 
 
 # ====================================================================
-#              FUNCIONES DE DATOS Y CONVERSIÓN
+#              FUNCIONES DE DATOS Y CONVERSIÓN (sin cambios)
 # ====================================================================
 
 # --- Función para insertar un nuevo registro ---
@@ -316,7 +345,7 @@ def actualizar_medio_cultivo(registro_id, especie, fase, ingrediente, concentrac
         if conn: conn.close()
 
 # ====================================================================
-#              INTERFAZ DE USUARIO PRINCIPAL (app_ui)
+#              INTERFAZ DE USUARIO PRINCIPAL (app_ui) (sin cambios)
 # ====================================================================
 
 def app_ui():
@@ -617,7 +646,6 @@ def app_ui():
 # ====================================================================
 
 # Llama a la función de autenticación. Si el login es exitoso (retorna True),
-# el código continúa y ejecuta app_ui(). Si no es exitoso o muestra el login,
-# llama a st.stop() dentro de check_password() y la ejecución se detiene.
+# el código continúa y ejecuta app_ui().
 if check_password():
     app_ui()
