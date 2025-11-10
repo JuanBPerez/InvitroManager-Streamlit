@@ -75,14 +75,19 @@ def get_user_from_db(username):
         if result:
             hashed_from_db = result[0]
             
-            # --- FIX CRÍTICO: Aseguramos que el hash devuelto sea un objeto `bytes` ---
+            # --- FIX CRÍTICO V3: Aseguramos que el hash devuelto sea un objeto `bytes` ---
             if isinstance(hashed_from_db, str):
-                # Intentamos decodificar el hex o asumimos latin1 si no es hex
+                # 1. Eliminar el prefijo '\x' si psycopg2 lo ha devuelto en formato hexadecimal
+                if hashed_from_db.startswith('\\x'):
+                    hashed_from_db = hashed_from_db[2:]
+                
                 try:
+                    # 2. Intentar decodificar el string hexadecimal (limpio) a bytes
                     hashed_from_db = bytes.fromhex(hashed_from_db)
                 except ValueError:
+                    # 3. Si falla, el dato es un string 'raro'. Lo codificamos como último recurso.
                     hashed_from_db = hashed_from_db.encode('latin1')
-            # --- FIN FIX CRÍTICO ---
+            # --- FIN FIX CRÍTICO V3 ---
             
             return {'hashed_password': hashed_from_db, 'is_admin': result[1]}
         return None
@@ -158,17 +163,18 @@ def check_password():
         user_data = get_user_from_db(username)
         
         if user_data:
-            # El hash ya viene en formato bytes gracias al FIX en get_user_from_db
+            # El hash ya viene en formato bytes gracias al FIX V3 en get_user_from_db
             hashed_from_db = user_data['hashed_password']
             
             try:
+                # Si el hash NO tiene el formato bcrypt correcto, aquí lanza ValueError
                 if check_hashed_password(password, hashed_from_db):
                     st.session_state["authenticated"] = True
                     st.session_state["username"] = username
                     st.session_state["is_admin"] = user_data['is_admin']
                     return True
             except ValueError:
-                # Si bcrypt lanza ValueError aquí, es porque el hash está corrupto
+                # Si bcrypt lanza ValueError aquí, es porque el hash es ilegible
                 st.error("Error crítico de autenticación: El formato del hash de la contraseña en la base de datos es inválido. Por favor, elimina el usuario de la BD y vuelve a crearlo.")
                 st.session_state["authenticated"] = False
                 return False
@@ -195,7 +201,7 @@ def check_password():
                             # Si la creación fue exitosa, pre-rellenamos el login para facilitar
                             st.session_state["username_input"] = admin_user
                             st.session_state["password_input"] = admin_password
-                            st.rerun() # <-- FIX DE Streamlit RERUN
+                            st.rerun() 
                     else:
                         st.error("Rellena ambos campos.")
 
@@ -306,7 +312,7 @@ def eliminar_medio_cultivo(registro_id):
         conn.commit()
         st.success(f"Registro ID {registro_id} eliminado de la base de datos.")
         # Forzar un rerun para actualizar la lista
-        st.rerun() # <-- FIX DE Streamlit RERUN
+        st.rerun() 
         return True
     except psycopg2.Error as e:
         st.error(f"Error al eliminar de la base de datos: {e}")
@@ -349,7 +355,7 @@ def actualizar_medio_cultivo(registro_id, especie, fase, ingrediente, concentrac
         if conn: conn.close()
 
 # ====================================================================
-#              INTERFAZ DE USUARIO PRINCIPAL (app_ui) (sin cambios)
+#              INTERFAZ DE USUARIO PRINCIPAL (app_ui)
 # ====================================================================
 
 def app_ui():
@@ -360,7 +366,7 @@ def app_ui():
         st.session_state["authenticated"] = False
         st.session_state["username"] = None
         st.session_state["is_admin"] = False
-        st.rerun() # <-- FIX DE Streamlit RERUN
+        st.rerun() 
     
     status_text = f"Conectado como **{st.session_state['username']}**"
     if st.session_state['is_admin']:
@@ -473,7 +479,7 @@ def app_ui():
             if submit_button:
                 if especie and fase_cultivo and ingrediente and concentracion is not None:
                     insertar_medio_cultivo(especie, fase_cultivo, ingrediente, concentracion, unidad)
-                    st.rerun() # <-- FIX DE Streamlit RERUN
+                    st.rerun() 
                 else:
                     st.error("Todos los campos (Especie, Fase, Ingrediente, Concentración) son obligatorios. Por favor, revisa.")
 
@@ -551,12 +557,12 @@ def app_ui():
                         if st.form_submit_button("💾 Guardar Cambios", type="primary"):
                             if actualizar_medio_cultivo(st.session_state.edit_id, especie_edit, fase_cultivo_edit, ingrediente_edit, concentracion_edit, unidad_edit):
                                 st.session_state.edit_id = None 
-                                st.rerun() # <-- FIX DE Streamlit RERUN
+                                st.rerun() 
                     
                     with col_cancel:
                         if st.form_submit_button("🚫 Cancelar"):
                             st.session_state.edit_id = None
-                            st.rerun() # <-- FIX DE Streamlit RERUN
+                            st.rerun()
                 st.markdown("---")
 
             # --- Visualización de Registros Filtrados y Botones ---
@@ -637,7 +643,7 @@ def app_ui():
                     if new_username and new_password:
                         add_user_to_db(new_username, new_password, is_admin_check)
                         # Opcional: forzar rerun para ver el resultado inmediatamente
-                        st.rerun() # <-- FIX DE Streamlit RERUN
+                        st.rerun() 
                     else:
                         st.error("Rellena el usuario y la contraseña.")
             
