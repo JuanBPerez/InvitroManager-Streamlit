@@ -271,7 +271,8 @@ def insertar_medio_cultivo(especie, fase, ingrediente, concentracion, unidad):
         """
         cur.execute(sql, (especie, fase, ingrediente, float(concentracion), unidad))
         conn.commit()
-        st.success(f"¡Ingrediente '{ingrediente}' guardado para **{especie}** / **{fase}**!")
+        # Se elimina el st.success aquí para evitar que se muestre dos veces si se usa rerun
+        # st.success(f"¡Ingrediente '{ingrediente}' guardado para **{especie}** / **{fase}**!")
         return True
     except psycopg2.Error as e:
         st.error(f"Error al guardar en la base de datos: {e}")
@@ -406,7 +407,7 @@ def app_ui():
     st.sidebar.button("🚪 Cerrar Sesión", on_click=logout)
     
     # 2. Título y Check de Conexión
-    st.title("🌱 Medios de Cultivo")
+    st.title("🌱 Gestor de Medios de Cultivo In Vitro")
 
     try:
         conn = get_db_connection()
@@ -456,7 +457,8 @@ def app_ui():
     with tab1:
         st.subheader("➕ Registrar Nuevo Ingrediente por Especie/Fase")
         
-        with st.form(key="form_registrar_medio"):
+        # AÑADIDO: clear_on_submit=True para limpiar los campos después de un envío exitoso
+        with st.form(key="form_registrar_medio", clear_on_submit=True): 
             
             # --- 1. INPUT ESPECIE ---
             especie_seleccionada = st.selectbox(
@@ -470,6 +472,7 @@ def app_ui():
             is_new_especie = especie_seleccionada == "Nueva Especie" or (not nombres_especies_existentes and especie_seleccionada != "-- Seleccionar Especie --")
 
             if is_new_especie:
+                # Nota: Los campos de texto en el formulario se limpiarán automáticamente con clear_on_submit=True
                 especie_input = st.text_input("Escribe el nombre de la **Nueva Especie**:", key="nuevo_nombre_especie").strip()
                 if especie_input:
                     especie = especie_input
@@ -500,6 +503,8 @@ def app_ui():
             
             # El resto de tus campos:
             ingrediente = st.text_input("3. Ingrediente (ej: Sacarosa)", key="input_ingrediente").strip()
+            # Si quieres que el number_input se limpie, debes asegurarte de que su valor por defecto no esté ligado 
+            # a una variable persistente o usar el mismo truco con el key. En este caso, clear_on_submit lo maneja.
             concentracion = st.number_input("4. Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
             unidad = st.selectbox("5. Unidad de Medida", ["mg/L", "g/L", "mM"], key="input_unidad")
 
@@ -508,8 +513,10 @@ def app_ui():
             # 3. Lógica de inserción de datos
             if submit_button:
                 if especie and fase_cultivo and ingrediente and concentracion is not None:
-                    insertar_medio_cultivo(especie, fase_cultivo, ingrediente, concentracion, unidad)
-                    st.rerun() 
+                    # Se llama a la función de inserción
+                    if insertar_medio_cultivo(especie, fase_cultivo, ingrediente, concentracion, unidad):
+                        st.success(f"¡Ingrediente '{ingrediente}' guardado para **{especie}** / **{fase_cultivo}**!")
+                        # No es necesario st.rerun() ya que clear_on_submit ya fuerza un nuevo render.
                 else:
                     st.error("Todos los campos (Especie, Fase, Ingrediente, Concentración) son obligatorios. Por favor, revisa.")
 
