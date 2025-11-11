@@ -460,8 +460,8 @@ def app_ui():
         # clear_on_submit=True para limpiar los campos después de un envío exitoso
         with st.form(key="form_registrar_medio", clear_on_submit=True): 
             
-            # --- 1. INPUT ESPECIE (for rendering) ---
-            st.selectbox(
+            # --- 1. INPUT ESPECIE (FIX: Capturar el valor inmediatamente) ---
+            especie_seleccionada = st.selectbox(
                 "1. Especie de Planta:", 
                 options=opciones_especie_select,
                 index=default_index_especie,
@@ -469,15 +469,15 @@ def app_ui():
             )
 
             # Lógica para mostrar el campo de texto si se selecciona "Nueva Especie"
-            especie_seleccionada = st.session_state.select_especie
+            # especie_seleccionada contiene el valor más reciente para la condición
             is_new_especie = especie_seleccionada == "Nueva Especie" or (not nombres_especies_existentes and especie_seleccionada != "-- Seleccionar Especie --")
 
             if is_new_especie:
                 # El valor se accederá directamente desde st.session_state.nuevo_nombre_especie en el submit
                 st.text_input("Escribe el nombre de la **Nueva Especie**:", key="nuevo_nombre_especie").strip()
 
-            # --- 2. INPUT FASE DE CULTIVO (for rendering) ---
-            st.selectbox(
+            # --- 2. INPUT FASE DE CULTIVO (FIX: Capturar el valor inmediatamente) ---
+            fase_seleccionada = st.selectbox(
                 "2. Fase de Cultivo (Medio):", 
                 options=opciones_fase,
                 index=default_index_fase,
@@ -485,7 +485,6 @@ def app_ui():
             )
 
             # Lógica para mostrar el campo de texto si se selecciona "Nueva Fase"
-            fase_seleccionada = st.session_state.select_fase_cultivo
             is_new_fase = fase_seleccionada == "Nueva Fase"
 
             if is_new_fase:
@@ -508,6 +507,7 @@ def app_ui():
                 final_especie = None
                 current_especie_selection = st.session_state.select_especie
 
+                # Comprobación basada en el estado final del selectbox (incluyendo si se seleccionó "Nueva Especie")
                 if current_especie_selection == "Nueva Especie" or (not nombres_especies_existentes and current_especie_selection != "-- Seleccionar Especie --"):
                     # Si es nueva, obtenemos el valor del campo de texto
                     if 'nuevo_nombre_especie' in st.session_state and st.session_state.nuevo_nombre_especie.strip():
