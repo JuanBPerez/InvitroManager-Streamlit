@@ -501,8 +501,9 @@ def app_ui():
             
             st.markdown("---")
             
-            # El resto de tus campos:
+            # El campo de ingrediente
             ingrediente = st.text_input("3. Ingrediente (ej: Sacarosa)", key="input_ingrediente").strip()
+            
             concentracion = st.number_input("4. Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
             unidad = st.selectbox("5. Unidad de Medida", ["mg/L", "g/L", "mM"], key="input_unidad")
 
@@ -517,6 +518,34 @@ def app_ui():
                         # No es necesario st.rerun() ya que clear_on_submit ya fuerza un nuevo render.
                 else:
                     st.error("Todos los campos (Especie, Fase, Ingrediente, Concentración) son obligatorios. Por favor, revisa.")
+            
+        # --- NUEVA INYECCIÓN JS: Desactivar autocompletado para el campo Ingrediente ---
+        # Buscamos el input con el label '3. Ingrediente' y desactivamos el autocompletado.
+        st.markdown("""
+            <script>
+            setTimeout(function() {
+                // Buscamos el div contenedor del label '3. Ingrediente'
+                const labelElement = Array.from(document.querySelectorAll('label')).find(
+                    el => el.textContent.includes('3. Ingrediente')
+                );
+
+                if (labelElement) {
+                    // El input de texto está justo después del label o dentro del mismo contenedor padre (Streamlit layout)
+                    // Buscamos el input de texto dentro de su contenedor padre
+                    const parentDiv = labelElement.closest('[data-testid^="stTextInput"]');
+                    if (parentDiv) {
+                        const inputElement = parentDiv.querySelector('input[type="text"]');
+                        if (inputElement) {
+                            // Desactivamos el autocompletado del navegador
+                            inputElement.setAttribute('autocomplete', 'off');
+                            // console.log("Autocomplete 'off' aplicado al campo Ingrediente.");
+                        }
+                    }
+                }
+            }, 150); 
+            </script>
+        """, unsafe_allow_html=True)
+
 
     # Inicializa una variable de estado para saber qué ID se está editando
     if 'edit_id' not in st.session_state:
@@ -663,7 +692,6 @@ def app_ui():
                     st.markdown("---")
 
     # ----------------- TAB 4: ADMIN (solo si es administrador) -----------------
-    # CORRECCIÓN: Usamos 'with tab4:' para asegurar que el contenido se dibuje DENTRO de la pestaña.
     if tab4:
         with tab4:
             st.subheader("🛠️ Gestión de Usuarios (Administrador)")
