@@ -460,67 +460,90 @@ def app_ui():
         # clear_on_submit=True para limpiar los campos después de un envío exitoso
         with st.form(key="form_registrar_medio", clear_on_submit=True): 
             
-            # --- 1. INPUT ESPECIE ---
-            especie_seleccionada = st.selectbox(
+            # --- 1. INPUT ESPECIE (for rendering) ---
+            st.selectbox(
                 "1. Especie de Planta:", 
                 options=opciones_especie_select,
                 index=default_index_especie,
                 key="select_especie"
             )
 
-            especie = None
+            # Lógica para mostrar el campo de texto si se selecciona "Nueva Especie"
+            especie_seleccionada = st.session_state.select_especie
             is_new_especie = especie_seleccionada == "Nueva Especie" or (not nombres_especies_existentes and especie_seleccionada != "-- Seleccionar Especie --")
 
             if is_new_especie:
-                # Nota: Los campos de texto en el formulario se limpiarán automáticamente con clear_on_submit=True
-                especie_input = st.text_input("Escribe el nombre de la **Nueva Especie**:", key="nuevo_nombre_especie").strip()
-                if especie_input:
-                    especie = especie_input
-            else:
-                if especie_seleccionada != "-- Seleccionar Especie --":
-                    especie = especie_seleccionada
+                # El valor se accederá directamente desde st.session_state.nuevo_nombre_especie en el submit
+                st.text_input("Escribe el nombre de la **Nueva Especie**:", key="nuevo_nombre_especie").strip()
 
-            # --- 2. INPUT FASE DE CULTIVO ---
-            fase_seleccionada = st.selectbox(
+            # --- 2. INPUT FASE DE CULTIVO (for rendering) ---
+            st.selectbox(
                 "2. Fase de Cultivo (Medio):", 
                 options=opciones_fase,
                 index=default_index_fase,
                 key="select_fase_cultivo"
             )
 
-            fase_cultivo = None
+            # Lógica para mostrar el campo de texto si se selecciona "Nueva Fase"
+            fase_seleccionada = st.session_state.select_fase_cultivo
             is_new_fase = fase_seleccionada == "Nueva Fase"
 
             if is_new_fase:
-                fase_input = st.text_input("Escribe el nombre de la **Nueva Fase de Cultivo**:", key="nuevo_fase_cultivo").strip()
-                if fase_input:
-                    fase_cultivo = fase_input
-            else:
-                if fase_seleccionada != "-- Seleccionar Fase --":
-                    fase_cultivo = fase_seleccionada
+                # El valor se accederá directamente desde st.session_state.nuevo_fase_cultivo en el submit
+                st.text_input("Escribe el nombre de la **Nueva Fase de Cultivo**:", key="nuevo_fase_cultivo").strip()
             
             st.markdown("---")
             
-            # El campo de ingrediente
-            ingrediente = st.text_input("3. Ingrediente (ej: Sacarosa)", key="input_ingrediente").strip()
-            
-            concentracion = st.number_input("4. Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
-            unidad = st.selectbox("5. Unidad de Medida", ["mg/L", "g/L", "mM"], key="input_unidad")
+            # El resto de los inputs:
+            st.text_input("3. Ingrediente (ej: Sacarosa)", key="input_ingrediente").strip()
+            st.number_input("4. Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
+            st.selectbox("5. Unidad de Medida", ["mg/L", "g/L", "mM"], key="input_unidad")
 
             submit_button = st.form_submit_button(label='💾 Guardar Ingrediente', type="primary", key='submit_button')
 
-            # 3. Lógica de inserción de datos
+            # 3. Lógica de inserción de datos (REFORZADA)
             if submit_button:
-                if especie and fase_cultivo and ingrediente and concentracion is not None:
+                
+                # --- A. Determinar el nombre final de la ESPECIE ---
+                final_especie = None
+                current_especie_selection = st.session_state.select_especie
+
+                if current_especie_selection == "Nueva Especie" or (not nombres_especies_existentes and current_especie_selection != "-- Seleccionar Especie --"):
+                    # Si es nueva, obtenemos el valor del campo de texto
+                    if 'nuevo_nombre_especie' in st.session_state and st.session_state.nuevo_nombre_especie.strip():
+                        final_especie = st.session_state.nuevo_nombre_especie.strip()
+                elif current_especie_selection != "-- Seleccionar Especie --":
+                    # Si es existente, usamos la selección
+                    final_especie = current_especie_selection
+                
+                # --- B. Determinar el nombre final de la FASE ---
+                final_fase_cultivo = None
+                current_fase_selection = st.session_state.select_fase_cultivo
+
+                if current_fase_selection == "Nueva Fase":
+                    # Si es nueva, obtenemos el valor del campo de texto
+                    if 'nuevo_fase_cultivo' in st.session_state and st.session_state.nuevo_fase_cultivo.strip():
+                        final_fase_cultivo = st.session_state.nuevo_fase_cultivo.strip()
+                elif current_fase_selection != "-- Seleccionar Fase --":
+                    # Si es existente, usamos la selección
+                    final_fase_cultivo = current_fase_selection
+                
+                # --- C. Obtener Ingrediente y Concentración (limpiamos por si acaso) ---
+                ingrediente = st.session_state.input_ingrediente.strip()
+                concentracion = st.session_state.input_concentracion
+                unidad = st.session_state.input_unidad
+                
+                
+                # --- D. Validar e Insertar ---
+                if final_especie and final_fase_cultivo and ingrediente and concentracion is not None:
                     # Se llama a la función de inserción
-                    if insertar_medio_cultivo(especie, fase_cultivo, ingrediente, concentracion, unidad):
-                        st.success(f"¡Ingrediente '{ingrediente}' guardado para **{especie}** / **{fase_cultivo}**!")
-                        # No es necesario st.rerun() ya que clear_on_submit ya fuerza un nuevo render.
+                    if insertar_medio_cultivo(final_especie, final_fase_cultivo, ingrediente, concentracion, unidad):
+                        st.success(f"¡Ingrediente '{ingrediente}' guardado para **{final_especie}** / **{final_fase_cultivo}**!")
                 else:
                     st.error("Todos los campos (Especie, Fase, Ingrediente, Concentración) son obligatorios. Por favor, revisa.")
-            
-        # --- NUEVA INYECCIÓN JS: Desactivar autocompletado para el campo Ingrediente ---
-        # Buscamos el input con el label '3. Ingrediente' y desactivamos el autocompletado.
+
+
+        # --- INYECCIÓN JS: Desactivar autocompletado para el campo Ingrediente ---
         st.markdown("""
             <script>
             setTimeout(function() {
@@ -530,15 +553,12 @@ def app_ui():
                 );
 
                 if (labelElement) {
-                    // El input de texto está justo después del label o dentro del mismo contenedor padre (Streamlit layout)
-                    // Buscamos el input de texto dentro de su contenedor padre
+                    // El input de texto está dentro del contenedor padre
                     const parentDiv = labelElement.closest('[data-testid^="stTextInput"]');
                     if (parentDiv) {
                         const inputElement = parentDiv.querySelector('input[type="text"]');
                         if (inputElement) {
-                            // Desactivamos el autocompletado del navegador
                             inputElement.setAttribute('autocomplete', 'off');
-                            // console.log("Autocomplete 'off' aplicado al campo Ingrediente.");
                         }
                     }
                 }
