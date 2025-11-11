@@ -457,41 +457,42 @@ def app_ui():
     with tab1:
         st.subheader("➕ Registrar Nuevo Ingrediente por Especie/Fase")
         
-        # clear_on_submit=True para limpiar los campos después de un envío exitoso
+        # --- LÓGICA DE SELECCIÓN DE ESPECIE (FUERA DEL FORMULARIO) ---
+        
+        # 1. INPUT ESPECIE (Capturar el valor inmediatamente)
+        especie_seleccionada = st.selectbox(
+            "1. Especie de Planta:", 
+            options=opciones_especie_select,
+            index=default_index_especie,
+            key="select_especie"
+        )
+
+        # Lógica para mostrar el campo de texto si se selecciona "Nueva Especie"
+        is_new_especie = especie_seleccionada == "Nueva Especie" or (not nombres_especies_existentes and especie_seleccionada != "-- Seleccionar Especie --")
+
+        if is_new_especie:
+            # El valor se accederá directamente desde st.session_state.nuevo_nombre_especie en el submit
+            st.text_input("Escribe el nombre de la **Nueva Especie**:", key="nuevo_nombre_especie").strip()
+
+        # 2. INPUT FASE DE CULTIVO (Capturar el valor inmediatamente)
+        fase_seleccionada = st.selectbox(
+            "2. Fase de Cultivo (Medio):", 
+            options=opciones_fase,
+            index=default_index_fase,
+            key="select_fase_cultivo"
+        )
+
+        # Lógica para mostrar el campo de texto si se selecciona "Nueva Fase"
+        is_new_fase = fase_seleccionada == "Nueva Fase"
+
+        if is_new_fase:
+            # El valor se accederá directamente desde st.session_state.nuevo_fase_cultivo en el submit
+            st.text_input("Escribe el nombre de la **Nueva Fase de Cultivo**:", key="nuevo_fase_cultivo").strip()
+        
+        st.markdown("---")
+        
+        # --- FORMULARIO DE INGREDIENTE (SÓLO CAMPOS DE INGREDIENTE Y SUBMIT) ---
         with st.form(key="form_registrar_medio", clear_on_submit=True): 
-            
-            # --- 1. INPUT ESPECIE (FIX: Capturar el valor inmediatamente) ---
-            especie_seleccionada = st.selectbox(
-                "1. Especie de Planta:", 
-                options=opciones_especie_select,
-                index=default_index_especie,
-                key="select_especie"
-            )
-
-            # Lógica para mostrar el campo de texto si se selecciona "Nueva Especie"
-            # especie_seleccionada contiene el valor más reciente para la condición
-            is_new_especie = especie_seleccionada == "Nueva Especie" or (not nombres_especies_existentes and especie_seleccionada != "-- Seleccionar Especie --")
-
-            if is_new_especie:
-                # El valor se accederá directamente desde st.session_state.nuevo_nombre_especie en el submit
-                st.text_input("Escribe el nombre de la **Nueva Especie**:", key="nuevo_nombre_especie").strip()
-
-            # --- 2. INPUT FASE DE CULTIVO (FIX: Capturar el valor inmediatamente) ---
-            fase_seleccionada = st.selectbox(
-                "2. Fase de Cultivo (Medio):", 
-                options=opciones_fase,
-                index=default_index_fase,
-                key="select_fase_cultivo"
-            )
-
-            # Lógica para mostrar el campo de texto si se selecciona "Nueva Fase"
-            is_new_fase = fase_seleccionada == "Nueva Fase"
-
-            if is_new_fase:
-                # El valor se accederá directamente desde st.session_state.nuevo_fase_cultivo en el submit
-                st.text_input("Escribe el nombre de la **Nueva Fase de Cultivo**:", key="nuevo_fase_cultivo").strip()
-            
-            st.markdown("---")
             
             # El resto de los inputs:
             st.text_input("3. Ingrediente (ej: Sacarosa)", key="input_ingrediente").strip()
@@ -500,14 +501,14 @@ def app_ui():
 
             submit_button = st.form_submit_button(label='💾 Guardar Ingrediente', type="primary", key='submit_button')
 
-            # 3. Lógica de inserción de datos (REFORZADA)
+            # 3. Lógica de inserción de datos (Usa los valores de session_state establecidos fuera del form)
             if submit_button:
                 
                 # --- A. Determinar el nombre final de la ESPECIE ---
                 final_especie = None
                 current_especie_selection = st.session_state.select_especie
 
-                # Comprobación basada en el estado final del selectbox (incluyendo si se seleccionó "Nueva Especie")
+                # Comprobación basada en el estado final del selectbox 
                 if current_especie_selection == "Nueva Especie" or (not nombres_especies_existentes and current_especie_selection != "-- Seleccionar Especie --"):
                     # Si es nueva, obtenemos el valor del campo de texto
                     if 'nuevo_nombre_especie' in st.session_state and st.session_state.nuevo_nombre_especie.strip():
