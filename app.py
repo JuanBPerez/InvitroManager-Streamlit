@@ -1,18 +1,18 @@
 import streamlit as st
-import psycopg2 
+import psycopg2
 import pandas as pd
-from psycopg2.extras import RealDictCursor 
+from psycopg2.extras import RealDictCursor
 import io
-import xlsxwriter 
+import xlsxwriter
 import bcrypt # Necesita 'pip install bcrypt'
 
 # ====================================================================
-#              ⚙️ CONFIGURACIÓN Y FUNCIONES DE SEGURIDAD ⚙️
+# 			⚙️ CONFIGURACIÓN Y FUNCIONES DE SEGURIDAD ⚙️
 # ====================================================================
 
 # --- CONFIGURACIÓN DE NOMBRES ---
-FASE_COLUMNA = 'nombre_medio' 
-ESPECIE_COLUMNA = 'especie_planta' 
+FASE_COLUMNA = 'nombre_medio'
+ESPECIE_COLUMNA = 'especie_planta'
 
 # Inicializar estado de sesión para autenticación
 if 'authenticated' not in st.session_state:
@@ -21,6 +21,8 @@ if 'username' not in st.session_state:
     st.session_state['username'] = None
 if 'is_admin' not in st.session_state:
     st.session_state['is_admin'] = False
+if 'edit_id' not in st.session_state:
+    st.session_state.edit_id = None
 
 # --- Hashing y Verificación con bcrypt ---
 def get_hashed_password(password):
@@ -36,6 +38,7 @@ def check_hashed_password(password, hashed_password):
 
 # --- Funciones de Gestión de Usuarios en BD ---
 
+@st.cache_resource
 def get_db_connection():
     """Establece y devuelve una conexión NUEVA a la base de datos."""
     try:
@@ -46,7 +49,7 @@ def get_db_connection():
             user=st.secrets["postgres"]["user"],
             password=st.secrets["postgres"]["password"],
             connect_timeout=5,
-            sslmode=st.secrets["postgres"]["sslmode"] 
+            sslmode=st.secrets["postgres"]["sslmode"]
         )
         return conn
     except KeyError as e:
@@ -71,16 +74,16 @@ def get_user_from_db(username):
         sql = "SELECT hashed_password, is_admin FROM users WHERE username = %s;"
         cur.execute(sql, (username,))
         result = cur.fetchone()
-        
+
         if result:
             hashed_from_db = result[0]
-            
+
             # --- FIX CRÍTICO V3: Aseguramos que el hash devuelto sea un objeto `bytes` ---
             if isinstance(hashed_from_db, str):
                 # 1. Eliminar el prefijo '\x' si psycopg2 lo ha devuelto en formato hexadecimal
                 if hashed_from_db.startswith('\\x'):
                     hashed_from_db = hashed_from_db[2:]
-                
+
                 try:
                     # 2. Intentar decodificar el string hexadecimal (limpio) a bytes
                     hashed_from_db = bytes.fromhex(hashed_from_db)
@@ -88,12 +91,12 @@ def get_user_from_db(username):
                     # 3. Si falla, el dato es un string 'raro'. Lo codificamos como último recurso.
                     hashed_from_db = hashed_from_db.encode('latin1')
             # --- FIN FIX CRÍTICO V3 ---
-            
+
             return {'hashed_password': hashed_from_db, 'is_admin': result[1]}
         return None
     finally:
         if cur: cur.close()
-        if conn: conn.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
 
 def check_for_any_user_in_db():
     """Verifica rápidamente si existe al menos un usuario en la tabla."""
@@ -111,7 +114,7 @@ def check_for_any_user_in_db():
         return False
     finally:
         if cur: cur.close()
-        if conn: conn.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
 
 def add_user_to_db(username, password, is_admin=False):
     """Inserta un nuevo usuario en la tabla 'users'."""
@@ -120,23 +123,23 @@ def add_user_to_db(username, password, is_admin=False):
     if not username or not password:
         st.error("Usuario y contraseña no pueden estar vacíos.")
         return False
-        
+
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
+
         # 1. Hashear la contraseña
         hashed_password = get_hashed_password(password)
-        
+
         # 2. Insertar en la BD
         # hashed_password ya es bytes, lo insertamos directamente en la columna BYTEA
         sql = "INSERT INTO users (username, hashed_password, is_admin) VALUES (%s, %s, %s);"
         cur.execute(sql, (username, hashed_password, is_admin))
         conn.commit()
-        
+
         st.success(f"Usuario '{username}' creado exitosamente (Admin: {is_admin}).")
         return True
-        
+
     except psycopg2.errors.UniqueViolation:
         st.error(f"El usuario '{username}' ya existe.")
         return False
@@ -145,7 +148,49 @@ def add_user_to_db(username, password, is_admin=False):
         return False
     finally:
         if cur: cur.close()
-        if conn: conn.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
+
+def get_all_users_from_db():
+    """Obtiene una lista de todos los usuarios (username, is_admin)."""
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        sql = "SELECT username, is_admin FROM users ORDER BY username;"
+        cur.execute(sql)
+        # Fetchall devuelve una lista de tuplas (username, is_admin)
+        return cur.fetchall()
+    except psycopg2.Error as e:
+        st.error(f"Error al listar usuarios: {e}")
+        return []
+    finally:
+        if cur: cur.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
+
+def delete_user_from_db(username):
+    """Elimina un usuario por su nombre."""
+    if username == st.session_state['username']:
+        st.error("❌ No puedes eliminar tu propia cuenta mientras estás logueado.")
+        return False
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        sql = "DELETE FROM users WHERE username = %s;"
+        cur.execute(sql, (username,))
+        conn.commit()
+        st.success(f"Usuario '{username}' eliminado correctamente.")
+        return True
+    except psycopg2.Error as e:
+        st.error(f"Error al eliminar usuario: {e}")
+        return False
+    finally:
+        if cur: cur.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
+
 
 # --- Lógica Principal de Autenticación ---
 
@@ -159,13 +204,13 @@ def check_password():
         """Verifica la contraseña introducida contra el hash en la BD."""
         username = st.session_state["username_input"].strip()
         password = st.session_state["password_input"]
-        
+
         user_data = get_user_from_db(username)
-        
+
         if user_data:
             # El hash ya viene en formato bytes gracias al FIX V3 en get_user_from_db
             hashed_from_db = user_data['hashed_password']
-            
+
             try:
                 # Si el hash NO tiene el formato bcrypt correcto, aquí lanza ValueError
                 if check_hashed_password(password, hashed_from_db):
@@ -184,24 +229,24 @@ def check_password():
 
     # 1. Si NO está autenticado, muestra el formulario de Login o Setup
     if not st.session_state.authenticated:
-        
+
         # Utilizamos la nueva función para verificar si existe CUALQUIER usuario
         users_exist = check_for_any_user_in_db()
 
         # --- Check para inicializar el primer usuario si la tabla está vacía ---
-        if not users_exist: 
+        if not users_exist:
             st.warning("⚠️ No hay usuarios registrados. Crea el primer usuario administrador.")
             with st.form("Initial_Admin_Setup"):
                 admin_user = st.text_input("Usuario Administrador:", key="admin_user_setup").strip()
                 admin_password = st.text_input("Contraseña:", type="password", key="admin_password_setup").strip()
-                
+
                 if st.form_submit_button("Crear Administrador Inicial", type="primary"):
                     if admin_user and admin_password:
                         if add_user_to_db(admin_user, admin_password, is_admin=True):
                             # Si la creación fue exitosa, pre-rellenamos el login para facilitar
                             st.session_state["username_input"] = admin_user
                             st.session_state["password_input"] = admin_password
-                            st.rerun() 
+                            st.rerun()
                     else:
                         st.error("Rellena ambos campos.")
 
@@ -211,14 +256,14 @@ def check_password():
             st.text_input("Usuario:", key="username_input")
             # Este campo de contraseña es el que debemos modificar con JS
             st.text_input("Contraseña:", type="password", key="password_input")
-            
+
             st.form_submit_button("Entrar", on_click=password_entered, type="primary")
-            
+
             # Muestra el error de login si la verificación falló en el último submit
             # Solo si el usuario intentó un submit que resultó en autenticación fallida
             if st.session_state.authenticated == False and 'username_input' in st.session_state and st.session_state["username_input"]:
                 st.error("Usuario o contraseña incorrectos.")
-        
+
         # --- FIX ROBUSTO: Inyección de JS para Deshabilitar Sugerencias de Contraseña ---
         # El navegador ignora 'off'. Usamos 'current-password' para forzarlo a NO sugerir una nueva.
         st.markdown("""
@@ -226,7 +271,7 @@ def check_password():
             // Usamos un pequeño retraso para asegurar que Streamlit ha renderizado el DOM
             setTimeout(function() {
                 // 1. Buscamos el formulario de LOGIN (asumiendo que es el primero o el único visible con el testid)
-                const loginForm = document.querySelector('[data-testid="stForm"]'); 
+                const loginForm = document.querySelector('[data-testid="stForm"]');
 
                 if (loginForm) {
                     // 2. Dentro de ese formulario, buscamos el input de contraseña
@@ -236,50 +281,49 @@ def check_password():
                         //    de decirle al navegador que es un campo de login para una contraseña existente.
                         passwordInput.setAttribute('autocomplete', 'current-password');
                     }
-                    
+
                     // 4. Buscamos el campo de usuario y le asignamos 'username' para ayudar al autocompletado de credenciales
                     const usernameInput = loginForm.querySelector('input[type="text"]');
                     if (usernameInput) {
                         usernameInput.setAttribute('autocomplete', 'username');
                     }
                 }
-            }, 100); 
+            }, 100);
             </script>
             """, unsafe_allow_html=True)
 
 
         st.stop() # Detiene la ejecución para no mostrar la UI principal
-        return False 
-    
+        return False
+
     # 2. Si está autenticado
-    return True 
+    return True
 
 # ====================================================================
-#              FUNCIONES DE DATOS Y CONVERSIÓN (sin cambios)
+# 			FUNCIONES DE DATOS Y CONVERSIÓN (ACTUALIZADAS)
 # ====================================================================
 
 # --- Función para insertar un nuevo registro ---
 def insertar_medio_cultivo(especie, fase, ingrediente, concentracion, unidad):
-    conn = None 
+    conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # CORRECCIÓN: Se cambia el nombre de la tabla a 'medios_de_cultivo'
         sql = f"""
-        INSERT INTO medios_cultivo ({ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente, concentracion, unidad) 
+        INSERT INTO medios_de_cultivo ({ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente, concentracion, unidad)
         VALUES (%s, %s, %s, %s, %s);
         """
         cur.execute(sql, (especie, fase, ingrediente, float(concentracion), unidad))
         conn.commit()
-        # Se elimina el st.success aquí para evitar que se muestre dos veces si se usa rerun
-        # st.success(f"¡Ingrediente '{ingrediente}' guardado para **{especie}** / **{fase}**!")
         return True
     except psycopg2.Error as e:
         st.error(f"Error al guardar en la base de datos: {e}")
         return False
     finally:
         if cur: cur.close()
-        if conn: conn.close() 
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
 
 # --- Función para obtener todos los registros ---
 def obtener_medios_cultivo():
@@ -288,7 +332,8 @@ def obtener_medios_cultivo():
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        sql = f"SELECT id, {ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente, concentracion, unidad FROM medios_cultivo ORDER BY {ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente;"
+        # CORRECCIÓN: Usar el nombre de tabla 'medios_de_cultivo'
+        sql = f"SELECT id, {ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente, concentracion, unidad FROM medios_de_cultivo ORDER BY {ESPECIE_COLUMNA}, {FASE_COLUMNA}, ingrediente;"
         cur.execute(sql)
         registros = cur.fetchall()
         return registros
@@ -297,7 +342,7 @@ def obtener_medios_cultivo():
         return []
     finally:
         if cur: cur.close()
-        if conn: conn.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
 
 # --- Función para obtener todos los nombres de ESPECIES únicos ---
 def obtener_nombres_especies():
@@ -306,14 +351,15 @@ def obtener_nombres_especies():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(f"SELECT DISTINCT {ESPECIE_COLUMNA} FROM medios_cultivo WHERE {ESPECIE_COLUMNA} IS NOT NULL AND {ESPECIE_COLUMNA} != '' ORDER BY {ESPECIE_COLUMNA};")
+        # CORRECCIÓN: Usar el nombre de tabla 'medios_de_cultivo'
+        cur.execute(f"SELECT DISTINCT {ESPECIE_COLUMNA} FROM medios_de_cultivo WHERE {ESPECIE_COLUMNA} IS NOT NULL AND {ESPECIE_COLUMNA} != '' ORDER BY {ESPECIE_COLUMNA};")
         return [row[0] for row in cur.fetchall()]
     except psycopg2.Error as e:
         print(f"Error al obtener nombres de especies: {e}")
         return []
     finally:
         if cur: cur.close()
-        if conn: conn.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
 
 # --- Función para obtener todas las FASES de cultivo únicas ---
 def obtener_nombres_fases():
@@ -322,35 +368,15 @@ def obtener_nombres_fases():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(f"SELECT DISTINCT {FASE_COLUMNA} FROM medios_cultivo WHERE {FASE_COLUMNA} IS NOT NULL AND {FASE_COLUMNA} != '' ORDER BY {FASE_COLUMNA};")
+        # CORRECCIÓN: Usar el nombre de tabla 'medios_de_cultivo'
+        cur.execute(f"SELECT DISTINCT {FASE_COLUMNA} FROM medios_de_cultivo WHERE {FASE_COLUMNA} IS NOT NULL AND {FASE_COLUMNA} != '' ORDER BY {FASE_COLUMNA};")
         return [row[0] for row in cur.fetchall()]
     except psycopg2.Error as e:
         print(f"Error al obtener nombres de fases: {e}")
         return []
     finally:
         if cur: cur.close()
-        if conn: conn.close()
-
-# --- Función para eliminar un registro por ID ---
-def eliminar_medio_cultivo(registro_id):
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        sql = "DELETE FROM medios_cultivo WHERE id = %s;"
-        cur.execute(sql, (registro_id,))
-        conn.commit()
-        st.success(f"Registro ID {registro_id} eliminado de la base de datos.")
-        # Forzar un rerun para actualizar la lista
-        st.rerun() 
-        return True
-    except psycopg2.Error as e:
-        st.error(f"Error al eliminar de la base de datos: {e}")
-        return False
-    finally:
-        if cur: cur.close()
-        if conn: conn.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
 
 # --- Funciones Auxiliares para la Descarga ---
 def convertir_a_csv(df):
@@ -369,8 +395,9 @@ def actualizar_medio_cultivo(registro_id, especie, fase, ingrediente, concentrac
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # CORRECCIÓN: Se cambia el nombre de la tabla a 'medios_de_cultivo'
         sql = f"""
-        UPDATE medios_cultivo 
+        UPDATE medios_de_cultivo
         SET {ESPECIE_COLUMNA} = %s, {FASE_COLUMNA} = %s, ingrediente = %s, concentracion = %s, unidad = %s
         WHERE id = %s;
         """
@@ -383,39 +410,58 @@ def actualizar_medio_cultivo(registro_id, especie, fase, ingrediente, concentrac
         return False
     finally:
         if cur: cur.close()
-        if conn: conn.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
+
+# --- Función para eliminar un registro por ID ---
+def eliminar_medio_cultivo(registro_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # CORRECCIÓN: Se cambia el nombre de la tabla a 'medios_de_cultivo'
+        sql = "DELETE FROM medios_de_cultivo WHERE id = %s;"
+        cur.execute(sql, (registro_id,))
+        conn.commit()
+        st.success(f"Registro ID {registro_id} eliminado de la base de datos.")
+        # Forzar un rerun para actualizar la lista
+        st.rerun()
+        return True
+    except psycopg2.Error as e:
+        st.error(f"Error al eliminar de la base de datos: {e}")
+        return False
+    finally:
+        if cur: cur.close()
+        # CORRECCIÓN V4: No cerrar la conexión cacheada
+
 
 # ====================================================================
-#              INTERFAZ DE USUARIO PRINCIPAL (app_ui)
+# 			INTERFAZ DE USUARIO PRINCIPAL (app_ui)
 # ====================================================================
 
 def app_ui():
     """Contiene toda la lógica de la UI que requiere autenticación."""
-    
+
     # 1. Botón de Cerrar Sesión en la barra lateral
     def logout():
         st.session_state["authenticated"] = False
         st.session_state["username"] = None
         st.session_state["is_admin"] = False
-        st.rerun() 
-    
+        st.rerun()
+
     status_text = f"Conectado como **{st.session_state['username']}**"
     if st.session_state['is_admin']:
         status_text += " (ADMIN)"
-    
-    st.sidebar.markdown(status_text)
-    st.sidebar.button("🚪 Cerrar Sesión", on_click=logout)
-    
-    # 2. Título y Check de Conexión
-    st.title("🌱 Gestor de Medios de Cultivo In Vitro")
 
-    try:
-        conn = get_db_connection()
-        st.sidebar.caption("Conexión a BD: OK")
-        conn.close() 
-    except Exception:
-        # El error ya se maneja en get_db_connection con st.stop(), pero por si acaso.
-        pass
+    st.sidebar.markdown(status_text)
+    
+    # Mensaje de conexión actualizado para reflejar la cache.
+    st.sidebar.caption("Conexión a BD: OK (Cacheada)") 
+    
+    st.sidebar.button("🚪 Cerrar Sesión", on_click=logout)
+
+    # 2. Título
+    st.title("🌱 Gestor de Medios de Cultivo In Vitro")
 
     # 3. Opciones Globales
     nombres_especies_existentes = obtener_nombres_especies()
@@ -444,24 +490,24 @@ def app_ui():
     tabs_list = ["➕ Registrar Ingrediente", "📋 Catálogo / Edición", "🧪 Medios de Cultivo por Especie"]
     if st.session_state.is_admin:
         tabs_list.append("🛠️ Admin Usuarios")
-        
+
     tab_objects = st.tabs(tabs_list)
 
     tab1 = tab_objects[0]
     tab2 = tab_objects[1]
     tab3 = tab_objects[2]
     # Se añade la comprobación para evitar IndexError si no es admin
-    tab4 = tab_objects[3] if st.session_state.is_admin else None 
+    tab4 = tab_objects[3] if st.session_state.is_admin else None
 
     # ----------------- TAB 1: REGISTRAR INGREDIENTE -----------------
     with tab1:
         st.subheader("➕ Registrar Nuevo Ingrediente por Especie/Fase")
-        
+
         # --- LÓGICA DE SELECCIÓN DE ESPECIE (FUERA DEL FORMULARIO) ---
-        
+
         # 1. INPUT ESPECIE (Capturar el valor inmediatamente)
         especie_seleccionada = st.selectbox(
-            "1. Especie de Planta:", 
+            "1. Especie de Planta:",
             options=opciones_especie_select,
             index=default_index_especie,
             key="select_especie"
@@ -476,7 +522,7 @@ def app_ui():
 
         # 2. INPUT FASE DE CULTIVO (Capturar el valor inmediatamente)
         fase_seleccionada = st.selectbox(
-            "2. Fase de Cultivo (Medio):", 
+            "2. Fase de Cultivo (Medio):",
             options=opciones_fase,
             index=default_index_fase,
             key="select_fase_cultivo"
@@ -488,12 +534,12 @@ def app_ui():
         if is_new_fase:
             # El valor se accederá directamente desde st.session_state.nuevo_fase_cultivo en el submit
             st.text_input("Escribe el nombre de la **Nueva Fase de Cultivo**:", key="nuevo_fase_cultivo").strip()
-        
+
         st.markdown("---")
-        
+
         # --- FORMULARIO DE INGREDIENTE (SÓLO CAMPOS DE INGREDIENTE Y SUBMIT) ---
-        with st.form(key="form_registrar_medio", clear_on_submit=True): 
-            
+        with st.form(key="form_registrar_medio", clear_on_submit=True):
+
             # El resto de los inputs:
             st.text_input("3. Ingrediente (ej: Sacarosa)", key="input_ingrediente").strip()
             st.number_input("4. Concentración", min_value=0.0, format="%.4f", key="input_concentracion")
@@ -503,12 +549,12 @@ def app_ui():
 
             # 3. Lógica de inserción de datos (Usa los valores de session_state establecidos fuera del form)
             if submit_button:
-                
+
                 # --- A. Determinar el nombre final de la ESPECIE ---
                 final_especie = None
                 current_especie_selection = st.session_state.select_especie
 
-                # Comprobación basada en el estado final del selectbox 
+                # Comprobación basada en el estado final del selectbox
                 if current_especie_selection == "Nueva Especie" or (not nombres_especies_existentes and current_especie_selection != "-- Seleccionar Especie --"):
                     # Si es nueva, obtenemos el valor del campo de texto
                     if 'nuevo_nombre_especie' in st.session_state and st.session_state.nuevo_nombre_especie.strip():
@@ -516,7 +562,7 @@ def app_ui():
                 elif current_especie_selection != "-- Seleccionar Especie --":
                     # Si es existente, usamos la selección
                     final_especie = current_especie_selection
-                
+
                 # --- B. Determinar el nombre final de la FASE ---
                 final_fase_cultivo = None
                 current_fase_selection = st.session_state.select_fase_cultivo
@@ -528,13 +574,13 @@ def app_ui():
                 elif current_fase_selection != "-- Seleccionar Fase --":
                     # Si es existente, usamos la selección
                     final_fase_cultivo = current_fase_selection
-                
+
                 # --- C. Obtener Ingrediente y Concentración (limpiamos por si acaso) ---
                 ingrediente = st.session_state.input_ingrediente.strip()
                 concentracion = st.session_state.input_concentracion
                 unidad = st.session_state.input_unidad
-                
-                
+
+
                 # --- D. Validar e Insertar ---
                 if final_especie and final_fase_cultivo and ingrediente and concentracion is not None:
                     # Se llama a la función de inserción
@@ -563,24 +609,20 @@ def app_ui():
                         }
                     }
                 }
-            }, 150); 
+            }, 150);
             </script>
         """, unsafe_allow_html=True)
 
 
-    # Inicializa una variable de estado para saber qué ID se está editando
-    if 'edit_id' not in st.session_state:
-        st.session_state.edit_id = None
-
     # ----------------- TAB 2: CATÁLOGO / EDICIÓN -----------------
     with tab2:
         st.subheader("🔍 Catálogo, Filtro y Herramientas de Edición")
-        
+
         datos_medios = obtener_medios_cultivo()
-        
+
         if datos_medios:
             df = pd.DataFrame(datos_medios)
-            
+
             # --- LÓGICA DE FILTRADO POR ESPECIE ---
             nombres_especies_filtrado = obtener_nombres_especies()
             opciones_filtro_especie = ["Mostrar todos"] + nombres_especies_filtrado
@@ -590,50 +632,50 @@ def app_ui():
                 options=opciones_filtro_especie,
                 index=0
             )
-            
+
             if filtro_seleccionado_especie != "Mostrar todos":
                 df_filtrado = df[df[ESPECIE_COLUMNA] == filtro_seleccionado_especie]
                 st.info(f"Mostrando solo ingredientes para la especie: **{filtro_seleccionado_especie}**")
             else:
-                df_filtrado = df 
+                df_filtrado = df
                 st.info("Mostrando todos los ingredientes en el catálogo.")
 
             # --- BOTONES DE DESCARGA ---
             if not df_filtrado.empty:
                 df_descarga = df_filtrado.drop(columns=['id'])
                 col_csv, col_excel = st.columns(2)
-                
+
                 with col_csv:
                     st.download_button(
-                        label="⬇️ Descargar como CSV", data=convertir_a_csv(df_descarga), 
+                        label="⬇️ Descargar como CSV", data=convertir_a_csv(df_descarga),
                         file_name='catalogo_invitro.csv', mime='text/csv', type="secondary"
                     )
-                
+
                 with col_excel:
                     st.download_button(
                         label="⬇️ Descargar como Excel (XLSX)", data=convertir_a_excel(df_descarga),
                         file_name='catalogo_invitro.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', type="secondary"
                     )
 
-            st.markdown("---") 
-            
+            st.markdown("---")
+
             # --- LÓGICA DE EDICIÓN (MODAL) ---
             if st.session_state.edit_id is not None:
                 registro_a_editar = df[df['id'] == st.session_state.edit_id].iloc[0]
-                
+
                 st.warning(f"Editando: {registro_a_editar[ESPECIE_COLUMNA]} / {registro_a_editar[FASE_COLUMNA]} - {registro_a_editar['ingrediente']}")
-                
+
                 with st.form(key="form_editar_medio", clear_on_submit=False):
                     especie_edit = st.text_input("Especie de Planta", value=registro_a_editar[ESPECIE_COLUMNA], key="edit_especie")
                     fase_cultivo_edit = st.text_input("Fase de Cultivo", value=registro_a_editar[FASE_COLUMNA], key="edit_fase_cultivo")
 
                     ingrediente_edit = st.text_input("Ingrediente", value=registro_a_editar['ingrediente'], key="edit_ingrediente")
                     concentracion_edit = st.number_input("Concentración", value=float(registro_a_editar['concentracion']), format="%.4f", min_value=0.0, key="edit_concentracion")
-                    
+
                     opciones_unidad = ["mg/L", "g/L", "mM"]
                     try: unidad_index = opciones_unidad.index(registro_a_editar['unidad'])
                     except ValueError: unidad_index = 0
-                    
+
                     unidad_edit = st.selectbox("Unidad de Medida", opciones_unidad, index=unidad_index, key="edit_unidad")
 
                     col_update, col_cancel = st.columns(2)
@@ -641,9 +683,9 @@ def app_ui():
                     with col_update:
                         if st.form_submit_button("💾 Guardar Cambios", type="primary"):
                             if actualizar_medio_cultivo(st.session_state.edit_id, especie_edit, fase_cultivo_edit, ingrediente_edit, concentracion_edit, unidad_edit):
-                                st.session_state.edit_id = None 
-                                st.rerun() 
-                    
+                                st.session_state.edit_id = None
+                                st.rerun()
+
                     with col_cancel:
                         if st.form_submit_button("🚫 Cancelar"):
                             st.session_state.edit_id = None
@@ -651,63 +693,65 @@ def app_ui():
                 st.markdown("---")
 
             # --- Visualización de Registros Filtrados y Botones ---
-            for index, row in df_filtrado.iterrows(): 
-                col1, col2, col3 = st.columns([0.7, 0.15, 0.15]) 
-                
+            for index, row in df_filtrado.iterrows():
+                col1, col2, col3 = st.columns([0.7, 0.15, 0.15])
+
                 col1.write(f"**{row[ESPECIE_COLUMNA]}** / **{row[FASE_COLUMNA]}** — {row['ingrediente']} ({row['concentracion']:.4f} {row['unidad']})")
-                
+
                 # Función auxiliar para editar
                 def set_edit_mode(record_id): st.session_state.edit_id = record_id
-                
+
                 with col2:
                     st.button("✏️", key=f"edit_btn_{row['id']}", on_click=set_edit_mode, args=(row['id'],))
 
                 with col3:
                     # Usamos un botón para eliminar. La función eliminar_medio_cultivo llama a st.rerun()
                     st.button("🗑️", key=f"delete_btn_{row['id']}", type="secondary", on_click=eliminar_medio_cultivo, args=(row['id'],))
-            
+
             st.markdown("---")
 
             st.caption("Estructura de la base de datos (Referencia):")
             df_display = df_filtrado.drop(columns=['id']).rename(columns={FASE_COLUMNA: 'Fase de Cultivo', ESPECIE_COLUMNA: 'Especie'})
             st.dataframe(df_display, use_container_width=True)
 
-        else: 
+        else:
             st.info("Aún no hay medios de cultivo registrados en la base de datos.")
-        
+
     # ----------------- TAB 3: AGRUPACIÓN -----------------
     with tab3:
         st.subheader("🧪 Composición Detallada por Especie y Fase")
 
         nombres_especies = obtener_nombres_especies()
-        
+
         if not nombres_especies:
             st.info("Aún no hay especies ni medios de cultivo registrados para mostrar.")
         else:
             st.markdown(f"**Total de Especies con Medios Registrados:** **{len(nombres_especies)}**")
             st.markdown("---")
-            
+
             datos_medios = obtener_medios_cultivo()
             if not datos_medios:
                 st.info("No hay datos de ingredientes para agrupar.")
             else:
                 df_completo = pd.DataFrame(datos_medios)
-                
+
                 for especie in nombres_especies:
                     st.header(f"🌿 Especie: {especie}")
-                    
+
                     df_especie = df_completo[df_completo[ESPECIE_COLUMNA] == especie]
                     fases_especie = df_especie[FASE_COLUMNA].unique()
-                    
+
                     for fase in fases_especie:
-                        
+
                         with st.expander(f"🧬 Fase de Cultivo: **{fase}**"):
-                            df_fase = df_especie[df_especie[FASE_COLUMNA] == fase]
-                            
+                            df_fase = df_especie[df_especie[ESPECIE_COLUMNA] == especie]
+                            df_fase = df_fase[df_fase[FASE_COLUMNA] == fase]
+
+
                             df_display_fase = df_fase[['ingrediente', 'concentracion', 'unidad']].copy()
                             df_display_fase.columns = ['Ingrediente', 'Concentración', 'Unidad']
                             df_display_fase['Concentración'] = df_display_fase['Concentración'].apply(lambda x: f"{x:.4f}")
-                            
+
                             st.dataframe(df_display_fase, hide_index=True, use_container_width=True)
 
                     st.markdown("---")
@@ -715,43 +759,57 @@ def app_ui():
     # ----------------- TAB 4: ADMIN (solo si es administrador) -----------------
     if tab4:
         with tab4:
-            st.subheader("🛠️ Gestión de Usuarios (Administrador)")
-            
-            # --- LÓGICA DE MANEJO DEL FORMULARIO DE ADMINISTRADOR ---
-            def handle_add_user_submit():
-                """Función callback ejecutada al presionar el botón de crear usuario."""
-                # Los valores se acceden directamente del st.session_state
-                new_username = st.session_state.new_username_input.strip()
-                new_password = st.session_state.new_password_input.strip()
-                is_admin_check = st.session_state.new_is_admin_check
-                
-                if new_username and new_password:
-                    if add_user_to_db(new_username, new_password, is_admin_check):
-                        # Solo recargamos si la adición fue exitosa para limpiar los campos
-                        st.rerun()
-                else:
-                    st.error("Rellena el usuario y la contraseña.")
+            st.subheader("🛠️ Gestión de Usuarios (Sólo Administradores)")
 
+            # --- A. AÑADIR NUEVO USUARIO ---
+            with st.expander("➕ Añadir Nuevo Usuario"):
+                with st.form("add_user_form", clear_on_submit=True):
+                    new_username = st.text_input("Nombre de Usuario", key="new_user_name").strip()
+                    new_password = st.text_input("Contraseña", type="password", key="new_user_password").strip()
+                    is_admin_check = st.checkbox("Conceder Permisos de Administrador", key="new_user_is_admin", value=False)
 
-            # --- Formulario de Registro de Nuevo Usuario ---
-            st.markdown("### Registrar Nuevo Usuario")
-            with st.form("form_add_user"):
-                st.text_input("Nombre de Usuario", key="new_username_input", value="") # Valor vacío para forzar la limpieza post-submit
-                st.text_input("Contraseña", type="password", key="new_password_input", value="")
-                st.checkbox("¿Es Administrador?", key="new_is_admin_check", value=False)
-                
-                # El botón llama a la función de manejo
-                st.form_submit_button("Crear Usuario", type="primary", on_click=handle_add_user_submit)
-            
+                    if st.form_submit_button("Crear Usuario"):
+                        if new_username and new_password:
+                            if add_user_to_db(new_username, new_password, is_admin_check):
+                                st.rerun() # Rerun para actualizar la lista de usuarios
+                        else:
+                            st.error("El nombre de usuario y la contraseña no pueden estar vacíos.")
+
             st.markdown("---")
-            
-            st.info("La gestión completa (edición/eliminación de usuarios existentes) se recomienda hacer directamente en tu herramienta de base de datos (Neon/pSQL) por seguridad.")
+
+            # --- B. LISTA DE USUARIOS Y GESTIÓN ---
+            st.subheader("Lista de Usuarios Registrados")
+            user_list = get_all_users_from_db()
+
+            if user_list:
+                # Convertir la lista de tuplas a DataFrame para una mejor visualización
+                df_users = pd.DataFrame(user_list, columns=['Usuario', 'Admin'])
+                df_users['Admin'] = df_users['Admin'].apply(lambda x: '✅ Sí' if x else '❌ No')
+
+                st.dataframe(df_users, hide_index=True, use_container_width=True)
+
+                # Control para eliminar
+                st.markdown("**Eliminar Usuario:**")
+
+                # Crear una lista de usuarios que NO son el usuario logueado actualmente
+                deletable_users = [user[0] for user in user_list if user[0] != st.session_state['username']]
+
+                if not deletable_users:
+                    st.info("Solo queda tu cuenta. No puedes eliminar tu propia cuenta mientras estás logueado.")
+                else:
+                    user_to_delete = st.selectbox("Selecciona un usuario a eliminar:", options=["-- Seleccionar --"] + deletable_users, key="user_to_delete")
+
+                    if user_to_delete != "-- Seleccionar --":
+                        if st.button(f"🚨 Confirmar Eliminación de **{user_to_delete}**", type="secondary"):
+                            if delete_user_from_db(user_to_delete):
+                                st.rerun()
+            else:
+                st.info("No hay usuarios registrados en la base de datos (aparte del que se creó en el setup inicial).")
+
 
 # ====================================================================
-#              PUNTO DE ENTRADA DE LA APLICACIÓN
+# 			PUNTO DE ENTRADA
 # ====================================================================
 
-# Llama a la función de autenticación. Si el login es exitoso (retorna True),
-# el código continúa y ejecuta app_ui().
 if check_password():
     app_ui()
